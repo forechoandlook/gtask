@@ -65,6 +65,8 @@ func runAdd(ctx context.Context, st *store.Store, stdout io.Writer, args []strin
 	title := fs.String("title", "", "task title")
 	priority := fs.Int("priority", 0, "priority")
 	source := fs.String("source", "", "task source")
+	kind := fs.String("kind", "", "task kind stored in meta, for example text or command")
+	parent := fs.Int64("parent", 0, "parent task id stored in meta.parent_id")
 	startAt := fs.String("start", "", "start time, supports RFC3339 or 'YYYY-MM-DD HH'")
 	targetAt := fs.String("target", "", "target time, supports RFC3339 or 'YYYY-MM-DD HH'")
 	startDays := fs.Int("start-days", 0, "set start time to N days from now")
@@ -80,13 +82,17 @@ func runAdd(ctx context.Context, st *store.Store, stdout io.Writer, args []strin
 	if !json.Valid([]byte(*meta)) {
 		return fmt.Errorf("meta must be valid json")
 	}
+	metaJSON, err := mergeMeta(*meta, strings.TrimSpace(*kind), hasFlag(args, "parent"), *parent)
+	if err != nil {
+		return err
+	}
 	task, err := st.AddTask(ctx, store.AddInput{
 		Title:    *title,
 		Priority: *priority,
 		Source:   *source,
 		StartAt:  resolveTimeArg(*startAt, *startDays),
 		TargetAt: resolveTimeArg(*targetAt, *days),
-		MetaJSON: *meta,
+		MetaJSON: metaJSON,
 		Note:     *note,
 	})
 	if err != nil {
@@ -107,12 +113,15 @@ func runList(ctx context.Context, st *store.Store, stdout io.Writer, args []stri
 		return err
 	}
 	for _, task := range tasks {
-		fmt.Fprintf(stdout, "%d\t[%s]\tp%d\t%s\tsource=%s\ttarget=%s\tsynced=%s\n",
+		metaSummary := summarizeMeta(task.MetaJSON)
+		fmt.Fprintf(stdout, "%d\t[%s]\tp%d\t%s\tsource=%s\tkind=%s\tparent=%s\ttarget=%s\tsynced=%s\n",
 			task.ID,
 			status(task.Completed),
 			task.Priority,
 			task.Title,
 			emptyDash(task.Source),
+			emptyDash(metaSummary.Kind),
+			formatParent(metaSummary.ParentID),
 			formatMaybe(task.TargetAt),
 			formatMaybe(task.LastSyncedAt),
 		)
@@ -126,6 +135,8 @@ func runFilter(ctx context.Context, st *store.Store, stdout io.Writer, args []st
 	source := fs.String("source", "", "filter by exact source")
 	query := fs.String("query", "", "substring match against title/meta/notes")
 	completed := fs.String("completed", "", "true or false")
+	kind := fs.String("kind", "", "filter by meta.kind")
+	parent := fs.Int64("parent", 0, "filter by meta.parent_id")
 	pmin := fs.Int("priority-min", 0, "minimum priority")
 	pmax := fs.Int("priority-max", 0, "maximum priority")
 	if err := fs.Parse(args); err != nil {
@@ -154,12 +165,21 @@ func runFilter(ctx context.Context, st *store.Store, stdout io.Writer, args []st
 		return err
 	}
 	for _, task := range tasks {
-		fmt.Fprintf(stdout, "%d\t[%s]\tp%d\t%s\tsource=%s\ttarget=%s\tsynced=%s\n",
+		metaSummary := summarizeMeta(task.MetaJSON)
+		if strings.TrimSpace(*kind) != "" && metaSummary.Kind != strings.TrimSpace(*kind) {
+			continue
+		}
+		if hasFlag(args, "parent") && !matchesParent(metaSummary.ParentID, *parent) {
+			continue
+		}
+		fmt.Fprintf(stdout, "%d\t[%s]\tp%d\t%s\tsource=%s\tkind=%s\tparent=%s\ttarget=%s\tsynced=%s\n",
 			task.ID,
 			status(task.Completed),
 			task.Priority,
 			task.Title,
 			emptyDash(task.Source),
+			emptyDash(metaSummary.Kind),
+			formatParent(metaSummary.ParentID),
 			formatMaybe(task.TargetAt),
 			formatMaybe(task.LastSyncedAt),
 		)
@@ -183,11 +203,14 @@ func runShow(ctx context.Context, st *store.Store, stdout io.Writer, args []stri
 	if err != nil {
 		return err
 	}
+	metaSummary := summarizeMeta(task.MetaJSON)
 	fmt.Fprintf(stdout, "id: %d\n", task.ID)
 	fmt.Fprintf(stdout, "title: %s\n", task.Title)
 	fmt.Fprintf(stdout, "status: %s\n", status(task.Completed))
 	fmt.Fprintf(stdout, "priority: %d\n", task.Priority)
 	fmt.Fprintf(stdout, "source: %s\n", emptyDash(task.Source))
+	fmt.Fprintf(stdout, "kind: %s\n", emptyDash(metaSummary.Kind))
+	fmt.Fprintf(stdout, "parent_id: %s\n", formatParent(metaSummary.ParentID))
 	fmt.Fprintf(stdout, "start_at: %s\n", formatMaybe(task.StartAt))
 	fmt.Fprintf(stdout, "target_at: %s\n", formatMaybe(task.TargetAt))
 	fmt.Fprintf(stdout, "updated_at: %s\n", task.UpdatedAt.UTC().Format(time.RFC3339))
@@ -202,10 +225,19 @@ func runShow(ctx context.Context, st *store.Store, stdout io.Writer, args []stri
 }
 
 func runUpdate(ctx context.Context, st *store.Store, stdout io.Writer, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: gtask update <id> [flags]")
+	}
+	id, err := strconv.ParseInt(args[0], 10, 64)
+	if err != nil {
+		return fmt.Errorf("parse id: %w", err)
+	}
 	fs := newFlagSet("update")
 	title := fs.String("title", "", "new title")
 	priority := fs.Int("priority", 0, "new priority")
 	source := fs.String("source", "", "new source")
+	kind := fs.String("kind", "", "set meta.kind")
+	parent := fs.String("parent", "", "set meta.parent_id, or null to clear")
 	startAt := fs.String("start", "", "set start time, supports RFC3339, 'YYYY-MM-DD HH', or null")
 	targetAt := fs.String("target", "", "set target time, supports RFC3339, 'YYYY-MM-DD HH', or null")
 	startDays := fs.Int("start-days", 0, "set start time to N days from now")
@@ -213,15 +245,8 @@ func runUpdate(ctx context.Context, st *store.Store, stdout io.Writer, args []st
 	meta := fs.String("meta", "", "replace metadata json")
 	completed := fs.String("completed", "", "true or false")
 	note := fs.String("note", "", "append note")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(args[1:]); err != nil {
 		return err
-	}
-	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: gtask update <id> [flags]")
-	}
-	id, err := strconv.ParseInt(fs.Arg(0), 10, 64)
-	if err != nil {
-		return fmt.Errorf("parse id: %w", err)
 	}
 	var in store.UpdateInput
 	in.ID = id
@@ -250,11 +275,30 @@ func runUpdate(ctx context.Context, st *store.Store, stdout io.Writer, args []st
 		v := futureDays(*days)
 		in.TargetAt = &v
 	}
+	if strings.TrimSpace(*meta) != "" || hasFlag(args, "kind") || hasFlag(args, "parent") {
+		baseMeta := "{}"
+		current, err := st.GetTask(ctx, id)
+		if err != nil {
+			return err
+		}
+		baseMeta = current.MetaJSON
+		if strings.TrimSpace(*meta) != "" {
+			baseMeta = *meta
+		}
+		parentSet, parentValue, err := parseParentUpdateArg(*parent, hasFlag(args, "parent"))
+		if err != nil {
+			return err
+		}
+		metaJSON, err := mergeMeta(baseMeta, strings.TrimSpace(*kind), parentSet, parentValue)
+		if err != nil {
+			return err
+		}
+		in.MetaJSON = &metaJSON
+	}
 	if strings.TrimSpace(*meta) != "" {
 		if !json.Valid([]byte(*meta)) {
 			return fmt.Errorf("meta must be valid json")
 		}
-		in.MetaJSON = meta
 	}
 	if strings.TrimSpace(*completed) != "" {
 		v, err := strconv.ParseBool(*completed)
@@ -300,11 +344,11 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  gtask --version")
-	fmt.Fprintln(w, "  gtask add --title <title> [--priority N] [--source X] [--start TIME] [--start-days N] [--target TIME|--days N] [--meta JSON] [--note TEXT]")
+	fmt.Fprintln(w, "  gtask add --title <title> [--priority N] [--source X] [--kind K] [--parent ID] [--start TIME] [--start-days N] [--target TIME|--days N] [--meta JSON] [--note TEXT]")
 	fmt.Fprintln(w, "  gtask list [--all]")
-	fmt.Fprintln(w, "  gtask filter [--all] [--source X] [--query TEXT] [--completed true|false] [--priority-min N] [--priority-max N]")
+	fmt.Fprintln(w, "  gtask filter [--all] [--source X] [--kind K] [--parent ID] [--query TEXT] [--completed true|false] [--priority-min N] [--priority-max N]")
 	fmt.Fprintln(w, "  gtask show <id>")
-	fmt.Fprintln(w, "  gtask update <id> [--title T] [--priority N] [--source X] [--start TIME|null] [--start-days N] [--target TIME|null] [--days N] [--meta JSON] [--completed true|false] [--note TEXT]")
+	fmt.Fprintln(w, "  gtask update <id> [--title T] [--priority N] [--source X] [--kind K] [--parent ID|null] [--start TIME|null] [--start-days N] [--target TIME|null] [--days N] [--meta JSON] [--completed true|false] [--note TEXT]")
 	fmt.Fprintln(w, "  gtask delete <id>")
 	fmt.Fprintln(w, "  gtask sync")
 	fmt.Fprintln(w, "")
@@ -317,14 +361,16 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  RFC3339 is an internet timestamp format like 2026-04-15T23:00:00+08:00.")
 	fmt.Fprintln(w, "  --days N means target time = now + N days.")
 	fmt.Fprintln(w, "  --start-days N means start time = now + N days.")
+	fmt.Fprintln(w, "  --kind and --parent are stored in meta as meta.kind and meta.parent_id.")
 	fmt.Fprintln(w, "  update --start null or --target null clears that field.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Examples:")
-	fmt.Fprintln(w, `  gtask add --title "write docs" --priority 2 --source aistudio --days 3 --meta '{"kind":"draft"}' --note "first note"`)
+	fmt.Fprintln(w, `  gtask add --title "write docs" --priority 2 --source aistudio --kind text --days 3 --note "first note"`)
+	fmt.Fprintln(w, `  gtask add --title "run sync" --kind command --parent 4 --meta '{"cmd":"opencli sync","cwd":"/Users/zzwy/tmp/opencli-rs"}'`)
 	fmt.Fprintln(w, `  gtask add --title "night run" --target "2026-04-20 21"`)
-	fmt.Fprintln(w, `  gtask filter --source idea1 --query CDP`)
+	fmt.Fprintln(w, `  gtask filter --source idea1 --kind command`)
 	fmt.Fprintln(w, `  gtask show 4`)
-	fmt.Fprintln(w, `  gtask update 1 --completed true --note "done locally"`)
+	fmt.Fprintln(w, `  gtask update 1 --kind command --parent 4 --completed true --note "done locally"`)
 	fmt.Fprintln(w, `  gtask delete 3`)
 	fmt.Fprintln(w, `  gtask sync`)
 }
@@ -376,6 +422,102 @@ func status(v bool) string {
 	return "todo"
 }
 
+type metaSummary struct {
+	Kind     string
+	ParentID *int64
+}
+
+func mergeMeta(raw, kind string, parentSet bool, parent int64) (string, error) {
+	var meta map[string]any
+	if strings.TrimSpace(raw) == "" {
+		raw = "{}"
+	}
+	if err := json.Unmarshal([]byte(raw), &meta); err != nil {
+		return "", fmt.Errorf("meta must be valid json object")
+	}
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	if strings.TrimSpace(kind) != "" {
+		meta["kind"] = strings.TrimSpace(kind)
+	}
+	if parentSet {
+		if parent > 0 {
+			meta["parent_id"] = parent
+		} else {
+			delete(meta, "parent_id")
+		}
+	}
+	out, err := json.Marshal(meta)
+	if err != nil {
+		return "", fmt.Errorf("marshal meta: %w", err)
+	}
+	return string(out), nil
+}
+
+func summarizeMeta(raw string) metaSummary {
+	var meta map[string]any
+	if err := json.Unmarshal([]byte(raw), &meta); err != nil {
+		return metaSummary{}
+	}
+	out := metaSummary{}
+	if v, ok := meta["kind"].(string); ok {
+		out.Kind = strings.TrimSpace(v)
+	}
+	if v, ok := toInt64(meta["parent_id"]); ok {
+		out.ParentID = &v
+	}
+	return out
+}
+
+func parseParentUpdateArg(raw string, parentFlagSet bool) (bool, int64, error) {
+	if !parentFlagSet {
+		return false, 0, nil
+	}
+	v := strings.TrimSpace(raw)
+	if v == "" || strings.EqualFold(v, "null") {
+		return true, 0, nil
+	}
+	id, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return false, 0, fmt.Errorf("parse parent: %w", err)
+	}
+	if id <= 0 {
+		return false, 0, fmt.Errorf("parent must be positive")
+	}
+	return true, id, nil
+}
+
+func matchesParent(parentID *int64, want int64) bool {
+	if want <= 0 {
+		return parentID == nil
+	}
+	return parentID != nil && *parentID == want
+}
+
+func formatParent(v *int64) string {
+	if v == nil {
+		return "-"
+	}
+	return strconv.FormatInt(*v, 10)
+}
+
+func toInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int64(n), true
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case json.Number:
+		i, err := n.Int64()
+		return i, err == nil
+	default:
+		return 0, false
+	}
+}
+
 func formatMaybe(v *time.Time) string {
 	if v == nil {
 		return "-"
@@ -409,15 +551,15 @@ func newFlagSet(name string) *flag.FlagSet {
 	fs.Usage = func() {
 		switch name {
 		case "add":
-			fmt.Fprintln(os.Stderr, "usage: gtask add --title <title> [--priority N] [--source X] [--start TIME] [--start-days N] [--target TIME] [--days N] [--meta JSON] [--note TEXT]")
+			fmt.Fprintln(os.Stderr, "usage: gtask add --title <title> [--priority N] [--source X] [--kind K] [--parent ID] [--start TIME] [--start-days N] [--target TIME] [--days N] [--meta JSON] [--note TEXT]")
 		case "list":
 			fmt.Fprintln(os.Stderr, "usage: gtask list [--all]")
 		case "filter":
-			fmt.Fprintln(os.Stderr, "usage: gtask filter [--all] [--source X] [--query TEXT] [--completed true|false] [--priority-min N] [--priority-max N]")
+			fmt.Fprintln(os.Stderr, "usage: gtask filter [--all] [--source X] [--kind K] [--parent ID] [--query TEXT] [--completed true|false] [--priority-min N] [--priority-max N]")
 		case "show":
 			fmt.Fprintln(os.Stderr, "usage: gtask show <id>")
 		case "update":
-			fmt.Fprintln(os.Stderr, "usage: gtask update <id> [--title T] [--priority N] [--source X] [--start TIME|null] [--start-days N] [--target TIME|null] [--days N] [--meta JSON] [--completed true|false] [--note TEXT]")
+			fmt.Fprintln(os.Stderr, "usage: gtask update <id> [--title T] [--priority N] [--source X] [--kind K] [--parent ID|null] [--start TIME|null] [--start-days N] [--target TIME|null] [--days N] [--meta JSON] [--completed true|false] [--note TEXT]")
 		case "delete":
 			fmt.Fprintln(os.Stderr, "usage: gtask delete <id>")
 		default:

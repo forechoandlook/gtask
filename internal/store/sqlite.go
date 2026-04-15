@@ -54,6 +54,10 @@ func Open(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 	s := &Store{db: db}
+	if err := s.configure(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := s.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -62,6 +66,13 @@ func Open(dbPath string) (*Store, error) {
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+func (s *Store) configure() error {
+	if _, err := s.db.Exec(`PRAGMA busy_timeout = 5000;`); err != nil {
+		return fmt.Errorf("configure sqlite: %w", err)
+	}
+	return nil
+}
 
 func (s *Store) migrate() error {
 	const q = `

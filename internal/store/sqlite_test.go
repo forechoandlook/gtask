@@ -83,3 +83,19 @@ func TestFilterAndDeleteTask(t *testing.T) {
 		t.Fatal("expected task to be deleted")
 	}
 }
+
+func TestOpenConfiguresBusyTimeout(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "gtask.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	var busyTimeout int
+	if err := st.db.QueryRow(`PRAGMA busy_timeout;`).Scan(&busyTimeout); err != nil {
+		t.Fatal(err)
+	}
+	if busyTimeout != 5000 {
+		t.Fatalf("expected busy_timeout=5000, got %d", busyTimeout)
+	}
+}
