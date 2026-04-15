@@ -24,8 +24,27 @@ func TestBuildPayload(t *testing.T) {
 	if payload["title"] != "demo" {
 		t.Fatalf("unexpected title: %v", payload["title"])
 	}
+	if _, ok := payload["id"]; ok {
+		t.Fatalf("did not expect id for unsynced task payload: %v", payload["id"])
+	}
 	notes, ok := payload["notes"].(string)
 	if !ok || !strings.Contains(notes, `"local_id": 7`) {
 		t.Fatalf("unexpected notes payload: %v", payload["notes"])
+	}
+}
+
+func TestBuildPayloadIncludesRemoteIDForUpdates(t *testing.T) {
+	now := time.Date(2026, 4, 15, 10, 0, 0, 0, time.UTC)
+	task := model.Task{
+		ID:           7,
+		Title:        "demo",
+		UpdatedAt:    now,
+		MetaJSON:     `{}`,
+		NotesJSON:    `[]`,
+		GoogleTaskID: "remote-123",
+	}
+	payload := buildPayload(task)
+	if payload["id"] != "remote-123" {
+		t.Fatalf("expected remote id in payload, got: %v", payload["id"])
 	}
 }

@@ -84,6 +84,9 @@ func buildPayload(task model.Task) map[string]any {
 		"status": "needsAction",
 		"notes":  buildNotes(task),
 	}
+	if strings.TrimSpace(task.GoogleTaskID) != "" {
+		payload["id"] = task.GoogleTaskID
+	}
 	if task.Completed {
 		payload["status"] = "completed"
 		payload["completed"] = time.Now().UTC().Format(time.RFC3339)
