@@ -12,9 +12,36 @@ import (
 	"time"
 
 	"github.com/forechoandlook/gtask/internal/config"
+	"github.com/forechoandlook/gtask/internal/daemon"
+	"github.com/forechoandlook/gtask/internal/service"
 	"github.com/forechoandlook/gtask/internal/store"
-	"github.com/forechoandlook/gtask/internal/syncer"
+	"net"
 )
+
+func getHostPort(args []string) (string, string, []string) {
+	host := os.Getenv("GTASK_HOST")
+	port := os.Getenv("GTASK_PORT")
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	if port == "" {
+		port = "8765"
+	}
+	// simply extract --host and --port
+	var newArgs []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--host" && i+1 < len(args) {
+			host = args[i+1]
+			i++
+		} else if args[i] == "--port" && i+1 < len(args) {
+			port = args[i+1]
+			i++
+		} else {
+			newArgs = append(newArgs, args[i])
+		}
+	}
+	return host, port, newArgs
+}
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
@@ -32,21 +59,42 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	defer st.Close()
 
+	host, port, cleanArgs := getHostPort(args)
+	args = cleanArgs
+
+	if len(args) == 0 {
+		printUsage(stdout)
+		return nil
+	}
+
+	localSvc := &service.LocalService{Store: st, Cfg: cfg}
+
+	if args[0] == "daemon" {
+		d := daemon.NewDaemon(localSvc, host, port)
+		return d.Start()
+	}
+
+	var svc service.Service = localSvc
+	rpcSvc, err := daemon.NewRPCClient("tcp", net.JoinHostPort(host, port))
+	if err == nil {
+		svc = rpcSvc
+	}
+
 	switch args[0] {
 	case "add":
-		return runAdd(ctx, st, stdout, args[1:])
+		return runAdd(ctx, svc, stdout, args[1:])
 	case "list":
-		return runList(ctx, st, stdout, args[1:])
+		return runList(ctx, svc, stdout, args[1:])
 	case "filter":
-		return runFilter(ctx, st, stdout, args[1:])
+		return runFilter(ctx, svc, stdout, args[1:])
 	case "show":
-		return runShow(ctx, st, stdout, args[1:])
+		return runShow(ctx, svc, stdout, args[1:])
 	case "update":
-		return runUpdate(ctx, st, stdout, args[1:])
+		return runUpdate(ctx, svc, stdout, args[1:])
 	case "delete":
-		return runDelete(ctx, st, stdout, args[1:])
+		return runDelete(ctx, svc, stdout, args[1:])
 	case "sync":
-		msg, err := syncer.New(cfg, st).Sync(ctx)
+		msg, err := svc.Sync(ctx)
 		if err != nil {
 			return err
 		}
@@ -60,7 +108,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-func runAdd(ctx context.Context, st *store.Store, stdout io.Writer, args []string) error {
+func runAdd(ctx context.Context, svc service.Service, stdout io.Writer, args []string) error {
 	fs := newFlagSet("add")
 	title := fs.String("title", "", "task title")
 	priority := fs.Int("priority", 0, "priority")
@@ -86,7 +134,7 @@ func runAdd(ctx context.Context, st *store.Store, stdout io.Writer, args []strin
 	if err != nil {
 		return err
 	}
-	task, err := st.AddTask(ctx, store.AddInput{
+	task, err := svc.AddTask(ctx, store.AddInput{
 		Title:    *title,
 		Priority: *priority,
 		Source:   *source,
@@ -102,13 +150,13 @@ func runAdd(ctx context.Context, st *store.Store, stdout io.Writer, args []strin
 	return nil
 }
 
-func runList(ctx context.Context, st *store.Store, stdout io.Writer, args []string) error {
+func runList(ctx context.Context, svc service.Service, stdout io.Writer, args []string) error {
 	fs := newFlagSet("list")
 	all := fs.Bool("all", false, "include completed tasks")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	tasks, err := st.ListTasks(ctx, *all)
+	tasks, err := svc.ListTasks(ctx, *all)
 	if err != nil {
 		return err
 	}
@@ -129,7 +177,7 @@ func runList(ctx context.Context, st *store.Store, stdout io.Writer, args []stri
 	return nil
 }
 
-func runFilter(ctx context.Context, st *store.Store, stdout io.Writer, args []string) error {
+func runFilter(ctx context.Context, svc service.Service, stdout io.Writer, args []string) error {
 	fs := newFlagSet("filter")
 	all := fs.Bool("all", false, "include completed tasks unless --completed is set")
 	source := fs.String("source", "", "filter by exact source")
@@ -160,7 +208,7 @@ func runFilter(ctx context.Context, st *store.Store, stdout io.Writer, args []st
 		}
 		filter.Completed = &v
 	}
-	tasks, err := st.ListTasksFiltered(ctx, filter)
+	tasks, err := svc.ListTasksFiltered(ctx, filter)
 	if err != nil {
 		return err
 	}
@@ -187,7 +235,7 @@ func runFilter(ctx context.Context, st *store.Store, stdout io.Writer, args []st
 	return nil
 }
 
-func runShow(ctx context.Context, st *store.Store, stdout io.Writer, args []string) error {
+func runShow(ctx context.Context, svc service.Service, stdout io.Writer, args []string) error {
 	fs := newFlagSet("show")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -199,7 +247,7 @@ func runShow(ctx context.Context, st *store.Store, stdout io.Writer, args []stri
 	if err != nil {
 		return fmt.Errorf("parse id: %w", err)
 	}
-	task, err := st.GetTask(ctx, id)
+	task, err := svc.GetTask(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -224,7 +272,7 @@ func runShow(ctx context.Context, st *store.Store, stdout io.Writer, args []stri
 	return nil
 }
 
-func runUpdate(ctx context.Context, st *store.Store, stdout io.Writer, args []string) error {
+func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gtask update <id> [flags]")
 	}
@@ -277,7 +325,7 @@ func runUpdate(ctx context.Context, st *store.Store, stdout io.Writer, args []st
 	}
 	if strings.TrimSpace(*meta) != "" || hasFlag(args, "kind") || hasFlag(args, "parent") {
 		baseMeta := "{}"
-		current, err := st.GetTask(ctx, id)
+		current, err := svc.GetTask(ctx, id)
 		if err != nil {
 			return err
 		}
@@ -308,7 +356,7 @@ func runUpdate(ctx context.Context, st *store.Store, stdout io.Writer, args []st
 		in.Completed = &v
 	}
 	in.AppendNote = *note
-	task, err := st.UpdateTask(ctx, in)
+	task, err := svc.UpdateTask(ctx, in)
 	if err != nil {
 		return err
 	}
@@ -316,7 +364,7 @@ func runUpdate(ctx context.Context, st *store.Store, stdout io.Writer, args []st
 	return nil
 }
 
-func runDelete(ctx context.Context, st *store.Store, stdout io.Writer, args []string) error {
+func runDelete(ctx context.Context, svc service.Service, stdout io.Writer, args []string) error {
 	fs := newFlagSet("delete")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -328,7 +376,7 @@ func runDelete(ctx context.Context, st *store.Store, stdout io.Writer, args []st
 	if err != nil {
 		return fmt.Errorf("parse id: %w", err)
 	}
-	if err := st.DeleteTask(ctx, id); err != nil {
+	if err := svc.DeleteTask(ctx, id); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "deleted task %d\n", id)
@@ -351,6 +399,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  gtask update <id> [--title T] [--priority N] [--source X] [--kind K] [--parent ID|null] [--start TIME|null] [--start-days N] [--target TIME|null] [--days N] [--meta JSON] [--completed true|false] [--note TEXT]")
 	fmt.Fprintln(w, "  gtask delete <id>")
 	fmt.Fprintln(w, "  gtask sync")
+	fmt.Fprintln(w, "  gtask daemon [--host 127.0.0.1] [--port 8765]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Time formats:")
 	fmt.Fprintln(w, "  RFC3339 example: 2026-04-15T23:00:00+08:00")
