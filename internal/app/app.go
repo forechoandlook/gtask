@@ -124,7 +124,17 @@ func runAdd(ctx context.Context, svc service.Service, stdout io.Writer, args []s
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if strings.TrimSpace(*title) == "" {
+
+	finalTitle := *title
+	if strings.TrimSpace(finalTitle) == "" && fs.NArg() > 0 {
+		finalTitle = fs.Arg(0)
+	}
+	finalNote := *note
+	if finalNote == "" && fs.NArg() > 1 {
+		finalNote = fs.Arg(1)
+	}
+
+	if strings.TrimSpace(finalTitle) == "" {
 		return fmt.Errorf("title is required")
 	}
 	if !json.Valid([]byte(*meta)) {
@@ -135,13 +145,13 @@ func runAdd(ctx context.Context, svc service.Service, stdout io.Writer, args []s
 		return err
 	}
 	task, err := svc.AddTask(ctx, store.AddInput{
-		Title:    *title,
+		Title:    finalTitle,
 		Priority: *priority,
 		Source:   *source,
 		StartAt:  resolveTimeArg(*startAt, *startDays),
 		TargetAt: resolveTimeArg(*targetAt, *days),
 		MetaJSON: metaJSON,
-		Note:     *note,
+		Note:     finalNote,
 	})
 	if err != nil {
 		return err
@@ -392,7 +402,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  gtask --version")
-	fmt.Fprintln(w, "  gtask add --title <title> [--priority N] [--source X] [--kind K] [--parent ID] [--start TIME] [--start-days N] [--target TIME|--days N] [--meta JSON] [--note TEXT]")
+	fmt.Fprintln(w, "  gtask add [title] [note] [--title <title>] [--priority N] [--source X] [--kind K] [--parent ID] [--start TIME] [--start-days N] [--target TIME|--days N] [--meta JSON] [--note TEXT]")
 	fmt.Fprintln(w, "  gtask list [--all]")
 	fmt.Fprintln(w, "  gtask filter [--all] [--source X] [--kind K] [--parent ID] [--query TEXT] [--completed true|false] [--priority-min N] [--priority-max N]")
 	fmt.Fprintln(w, "  gtask show <id>")
@@ -415,6 +425,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Examples:")
 	fmt.Fprintln(w, `  gtask add --title "write docs" --priority 2 --source aistudio --kind text --days 3 --note "first note"`)
+	fmt.Fprintln(w, "  gtask add \"write docs\" \"first note\" --priority 2 --source aistudio --kind text --days 3")
 	fmt.Fprintln(w, `  gtask add --title "run sync" --kind command --parent 4 --meta '{"cmd":"opencli sync","cwd":"/Users/zzwy/tmp/opencli-rs"}'`)
 	fmt.Fprintln(w, `  gtask add --title "night run" --target "2026-04-20 21"`)
 	fmt.Fprintln(w, `  gtask filter --source idea1 --kind command`)
@@ -600,7 +611,7 @@ func newFlagSet(name string) *flag.FlagSet {
 	fs.Usage = func() {
 		switch name {
 		case "add":
-			fmt.Fprintln(os.Stderr, "usage: gtask add --title <title> [--priority N] [--source X] [--kind K] [--parent ID] [--start TIME] [--start-days N] [--target TIME] [--days N] [--meta JSON] [--note TEXT]")
+			fmt.Fprintln(os.Stderr, "usage: gtask add [title] [note] [--title <title>] [--priority N] [--source X] [--kind K] [--parent ID] [--start TIME] [--start-days N] [--target TIME] [--days N] [--meta JSON] [--note TEXT]")
 		case "list":
 			fmt.Fprintln(os.Stderr, "usage: gtask list [--all]")
 		case "filter":
