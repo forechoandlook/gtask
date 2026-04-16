@@ -622,6 +622,8 @@ func newFlagSet(name string) *flag.FlagSet {
 			fmt.Fprintln(os.Stderr, "usage: gtask update <id> [--title T] [--priority N] [--source X] [--kind K] [--parent ID|null] [--start TIME|null] [--start-days N] [--target TIME|null] [--days N] [--meta JSON] [--completed true|false] [--note TEXT]")
 		case "delete":
 			fmt.Fprintln(os.Stderr, "usage: gtask delete <id>")
+		case "daemon":
+			fmt.Fprintln(os.Stderr, "usage: gtask daemon [--host 127.0.0.1] [--port 8765]")
 		default:
 			fmt.Fprintf(os.Stderr, "usage: gtask %s\n", name)
 		}
