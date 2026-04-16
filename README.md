@@ -91,7 +91,7 @@ gtask daemon --host 127.0.0.1 --port 8765 &
 
 ```bash
 go run ./cmd/gtask daemon &
-go run ./cmd/gtask add --title "write docs" --priority 2 --source aistudio --kind text --days 3 --note "first note"
+go run ./cmd/gtask add "write docs" "first note" --priority 2 --source aistudio --kind text --days 3
 go run ./cmd/gtask add --title "run sync" --kind command --parent 4 --meta '{"cmd":"opencli sync","cwd":"/Users/zzwy/tmp/opencli-rs"}'
 go run ./cmd/gtask add --title "night run" --target "2026-04-20 21"
 go run ./cmd/gtask list
