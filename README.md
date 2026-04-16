@@ -24,6 +24,7 @@ gtask --version
 
 当前功能：
 
+- `daemon`：常驻后台运行，支持 RPC 并定时提供临近任务本地通知
 - `add`：新增任务
 - `list`：列出任务
 - `filter`：按 source、kind、parent、关键词、完成状态、优先级范围筛选
@@ -77,9 +78,19 @@ Google Tasks 映射：
 - SQLite 连接默认启用 `busy_timeout=5000ms`
 - 多个进程同时写库时会先等锁释放，而不是立刻因瞬时锁冲突失败
 
+进阶（Client/Daemon 模式）：
+支持常驻运行，提供临近任务时的本地通知。只需在后台运行：
+
+```bash
+gtask daemon --host 127.0.0.1 --port 8765 &
+```
+
+之后普通的 `gtask` 命令会自动通过 RPC 连接 Daemon 处理任务（同样支持环境变量 `GTASK_HOST` 和 `GTASK_PORT` 或 `--host` `--port` 覆盖），如果 Daemon 挂掉则自动降级回本地直连数据库。
+
 示例：
 
 ```bash
+go run ./cmd/gtask daemon &
 go run ./cmd/gtask add --title "write docs" --priority 2 --source aistudio --kind text --days 3 --note "first note"
 go run ./cmd/gtask add --title "run sync" --kind command --parent 4 --meta '{"cmd":"opencli sync","cwd":"/Users/zzwy/tmp/opencli-rs"}'
 go run ./cmd/gtask add --title "night run" --target "2026-04-20 21"

@@ -63,3 +63,31 @@ func TestParseParentUpdateArg(t *testing.T) {
 		t.Fatalf("unexpected parse result: set=%v parent=%d", set, parent)
 	}
 }
+
+func TestGetHostPort(t *testing.T) {
+	// mock environment variables
+	t.Setenv("GTASK_HOST", "myhost")
+	t.Setenv("GTASK_PORT", "1234")
+
+	host, port, args := getHostPort([]string{"add", "--title", "test"})
+	if host != "myhost" {
+		t.Errorf("expected host 'myhost', got %v", host)
+	}
+	if port != "1234" {
+		t.Errorf("expected port '1234', got %v", port)
+	}
+	if len(args) != 3 {
+		t.Errorf("expected 3 args, got %v", args)
+	}
+
+	host, port, args = getHostPort([]string{"add", "--host", "override", "--port", "5678", "--title", "test"})
+	if host != "override" {
+		t.Errorf("expected host 'override', got %v", host)
+	}
+	if port != "5678" {
+		t.Errorf("expected port '5678', got %v", port)
+	}
+	if len(args) != 3 {
+		t.Errorf("expected 3 args, got %v", args)
+	}
+}
