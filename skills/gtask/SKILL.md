@@ -6,8 +6,10 @@ metadata:
    authors: ["zwy"]
    updated: "2026-04-17"
 ---
+## 一键安装 / 卸载
 `curl -fsSL https://raw.githubusercontent.com/forechoandlook/gtask/main/install.sh | bash`
 `curl -fsSL https://raw.githubusercontent.com/forechoandlook/gtask/main/uninstall.sh | bash`
+## 基本用法
 ```bash
 gtask add "撰写文档" "第一条备注" # 简易模式
 gtask add --title "修复 Bug" --priority 2 --source "github" --kind "bug" --days 2 --note "初步排查完成" # 完整模式 source表示任务来源，kind表示任务类型，days表示截止时间为多少天后 (也可以用 --target "2026-04-15T23:00:00+08:00" 直接指定截止时间 或者 2026-04-15 23:00 (默认本地时区))
