@@ -29,7 +29,6 @@ func getHostPort(args []string) (string, string, []string) {
 	if port == "" {
 		port = "8765"
 	}
-	// simply extract --host and --port
 	var newArgs []string
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--host" && i+1 < len(args) {
@@ -95,6 +94,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return runUpdate(ctx, svc, stdout, args[1:])
 	case "delete":
 		return runDelete(ctx, svc, stdout, args[1:])
+	case "upgrade":
+		return runSelfUpgrade(ctx, stdout)
 	case "sync":
 		msg, err := svc.Sync(ctx)
 		if err != nil {
@@ -245,15 +246,15 @@ func runFilter(ctx context.Context, svc service.Service, stdout io.Writer, args 
 func formatTaskLine(t model.Task) string {
 	meta := summarizeMeta(t.MetaJSON)
 	
-	// Status and ID
 	statusIcon := "[ ]"
 	if t.Completed {
 		statusIcon = "[x]"
 	}
 	
+	// ID [ ] Title
 	line := fmt.Sprintf("%-3d %s %s", t.ID, statusIcon, t.Title)
 
-	// Tags (Priority, Source, Kind)
+	// Minimal Tags: p1 source kind
 	var tags []string
 	if t.Priority != 0 {
 		tags = append(tags, fmt.Sprintf("p%d", t.Priority))
@@ -265,25 +266,24 @@ func formatTaskLine(t model.Task) string {
 		tags = append(tags, meta.Kind)
 	}
 	if len(tags) > 0 {
-		line += " (" + strings.Join(tags, "·") + ")"
+		line += " " + strings.Join(tags, " ")
 	}
 
-	// Time
+	// Minimal Time: 2h ago / in 3d
 	if t.TargetAt != nil {
-		rel := humanize.RelTime(*t.TargetAt, time.Now(), "ago", "from now")
-		line += " Due: " + rel
+		rel := humanize.RelTime(*t.TargetAt, time.Now(), "", "")
+		if strings.HasSuffix(rel, " from now") {
+			rel = "in " + strings.TrimSuffix(rel, " from now")
+		}
+		line += " " + rel
 	}
 
-	// Recurring/Monitor indicators
-	var indicators []string
+	// Simple indicators
 	if strings.Contains(t.MetaJSON, "recurrence") {
-		indicators = append(indicators, "↺")
+		line += " ↺"
 	}
 	if strings.Contains(t.MetaJSON, "monitor_cmd") {
-		indicators = append(indicators, "👁")
-	}
-	if len(indicators) > 0 {
-		line += " " + strings.Join(indicators, "")
+		line += " 👁"
 	}
 
 	return line
@@ -328,7 +328,7 @@ func runShow(ctx context.Context, svc service.Service, stdout io.Writer, args []
 
 func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args []string) error {
 	if len(args) == 0 {
-		return runSelfUpgrade(ctx, stdout)
+		return fmt.Errorf("usage: gtask update <id> [flags]")
 	}
 	id, err := strconv.ParseInt(args[0], 10, 64)
 	if err != nil {
@@ -459,10 +459,11 @@ Core Commands:
   list      List pending tasks (use --all to see completed)
   filter    Search and filter tasks with advanced criteria
   show      Show full details of a single task by ID
-  update    Modify a task (with <id>) or upgrade gtask (without <id>)
+  update    Modify a task by ID
   delete    Remove a task by ID
-  sync      Synchronize local tasks with Google Tasks (requires 'gws' CLI)
+  sync      Synchronize local tasks with Google Tasks
   daemon    Start background RPC server for faster access and notifications
+  upgrade   Upgrade gtask binary to the latest version
   version   Print version information
 
 Command Details:
@@ -480,23 +481,11 @@ Command Details:
      --monitor-interval DUR How often to run monitor (default 10m, e.g. 1m, 1h)
      --recurrence DUR  Repeat task after completion (e.g. 24h, 1h)
 
-  filter               Search tasks across all fields.
-     --query TEXT      Keyword search in title, meta, and notes
-     --source TEXT     Filter by exact source
-     --kind TEXT       Filter by meta.kind
-     --parent ID       Filter by meta.parent_id
-     --completed B     Filter by status (true/false)
-     --priority-min N  Minimum priority
-     --priority-max N  Maximum priority
-
   update <id>
      --completed B     Mark as done (true) or todo (false)
      --note TEXT       Append a new note to the notes history
      --target null     Use 'null' to clear target/start time fields
      --recurrence DUR  Update recurrence interval
-
-  update (without <id>)
-     Checks for a new version and upgrades the gtask binary.
 
 Time Formats:
   RFC3339:         2026-04-15T23:00:00+08:00
@@ -511,17 +500,9 @@ Environment Variables:
   GTASK_HOST       Daemon host (default 127.0.0.1)
   GTASK_PORT       Daemon port (default 8765)
 
-Data Locations:
-  SQLite DB:       ~/.gtask/gtask.db
-  Config:          ~/.gtask/config.json
-
 Examples:
-  gtask add "Buy milk" "Don't forget the low-fat one" --days 1
-  gtask add "Wait for deploy" --monitor-cmd "curl -sf http://app.com/v | grep 1.2.0" --monitor-interval 1m
-  gtask add "Daily backup" --recurrence 24h
-  gtask list
-  gtask filter --query "milk"
-  gtask update 1 --completed true --note "Done at the local store"
+  gtask add "Buy milk" --days 1
+  gtask upgrade
   gtask sync
 `
 	fmt.Fprint(w, help)
@@ -734,6 +715,8 @@ func newFlagSet(name string) *flag.FlagSet {
 			fmt.Fprintln(os.Stderr, "usage: gtask delete <id>")
 		case "daemon":
 			fmt.Fprintln(os.Stderr, "usage: gtask daemon [--host 127.0.0.1] [--port 8765]")
+		case "upgrade":
+			fmt.Fprintln(os.Stderr, "usage: gtask upgrade")
 		default:
 			fmt.Fprintf(os.Stderr, "usage: gtask %s\n", name)
 		}
