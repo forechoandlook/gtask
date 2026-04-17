@@ -254,11 +254,9 @@ func formatTaskLine(t model.Task) string {
 	// ID [ ] Title
 	line := fmt.Sprintf("%-3d %s %s", t.ID, statusIcon, t.Title)
 
-	// Minimal Tags: p1 source kind
+	// Minimal Tags: p0 source kind
 	var tags []string
-	if t.Priority != 0 {
-		tags = append(tags, fmt.Sprintf("p%d", t.Priority))
-	}
+	tags = append(tags, fmt.Sprintf("p%d", t.Priority))
 	if t.Source != "" {
 		tags = append(tags, t.Source)
 	}
@@ -269,13 +267,15 @@ func formatTaskLine(t model.Task) string {
 		line += " " + strings.Join(tags, " ")
 	}
 
-	// Minimal Time: 2h ago / in 3d
+	// Minimal Time: 2h ago / in 3d / no time
 	if t.TargetAt != nil {
 		rel := humanize.RelTime(*t.TargetAt, time.Now(), "", "")
 		if strings.HasSuffix(rel, " from now") {
 			rel = "in " + strings.TrimSuffix(rel, " from now")
 		}
 		line += " " + rel
+	} else {
+		line += " no time"
 	}
 
 	// Simple indicators
