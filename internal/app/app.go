@@ -63,6 +63,18 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	host, port, cleanArgs := getHostPort(args)
 	args = cleanArgs
 
+	// Handle global --json flag
+	jsonMode := false
+	var finalArgs []string
+	for _, arg := range args {
+		if arg == "--json" {
+			jsonMode = true
+		} else {
+			finalArgs = append(finalArgs, arg)
+		}
+	}
+	args = finalArgs
+
 	if len(args) == 0 {
 		printUsage(stdout)
 		return nil
@@ -83,17 +95,17 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	switch args[0] {
 	case "add":
-		return runAdd(ctx, svc, stdout, args[1:])
+		return runAdd(ctx, svc, stdout, args[1:], jsonMode)
 	case "list":
-		return runList(ctx, svc, stdout, args[1:])
+		return runList(ctx, svc, stdout, args[1:], jsonMode)
 	case "filter":
-		return runFilter(ctx, svc, stdout, args[1:])
+		return runFilter(ctx, svc, stdout, args[1:], jsonMode)
 	case "show":
-		return runShow(ctx, svc, stdout, args[1:])
+		return runShow(ctx, svc, stdout, args[1:], jsonMode)
 	case "update":
-		return runUpdate(ctx, svc, stdout, args[1:])
+		return runUpdate(ctx, svc, stdout, args[1:], jsonMode)
 	case "delete":
-		return runDelete(ctx, svc, stdout, args[1:])
+		return runDelete(ctx, svc, stdout, args[1:], jsonMode)
 	case "upgrade":
 		return runSelfUpgrade(ctx, stdout)
 	case "sync":
@@ -101,7 +113,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(stdout, msg)
+		if jsonMode {
+			json.NewEncoder(stdout).Encode(map[string]string{"message": msg})
+		} else {
+			fmt.Fprintln(stdout, msg)
+		}
 		return nil
 	case "help", "--help", "-h":
 		printUsage(stdout)
@@ -111,7 +127,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-func runAdd(ctx context.Context, svc service.Service, stdout io.Writer, args []string) error {
+func runAdd(ctx context.Context, svc service.Service, stdout io.Writer, args []string, jsonMode bool) error {
 	fs := newFlagSet("add")
 	title := fs.String("title", "", "task title")
 	priority := fs.Int("priority", 0, "priority")
@@ -175,11 +191,14 @@ func runAdd(ctx context.Context, svc service.Service, stdout io.Writer, args []s
 	if err != nil {
 		return err
 	}
+	if jsonMode {
+		return json.NewEncoder(stdout).Encode(task)
+	}
 	fmt.Fprintf(stdout, "added task %d: %s\n", task.ID, task.Title)
 	return nil
 }
 
-func runList(ctx context.Context, svc service.Service, stdout io.Writer, args []string) error {
+func runList(ctx context.Context, svc service.Service, stdout io.Writer, args []string, jsonMode bool) error {
 	fs := newFlagSet("list")
 	all := fs.Bool("all", false, "include completed tasks")
 	if err := fs.Parse(args); err != nil {
@@ -189,13 +208,16 @@ func runList(ctx context.Context, svc service.Service, stdout io.Writer, args []
 	if err != nil {
 		return err
 	}
+	if jsonMode {
+		return json.NewEncoder(stdout).Encode(tasks)
+	}
 	for _, task := range tasks {
 		fmt.Fprintln(stdout, formatTaskLine(task))
 	}
 	return nil
 }
 
-func runFilter(ctx context.Context, svc service.Service, stdout io.Writer, args []string) error {
+func runFilter(ctx context.Context, svc service.Service, stdout io.Writer, args []string, jsonMode bool) error {
 	fs := newFlagSet("filter")
 	all := fs.Bool("all", false, "include completed tasks")
 	source := fs.String("source", "", "filter by source")
@@ -230,6 +252,8 @@ func runFilter(ctx context.Context, svc service.Service, stdout io.Writer, args 
 	if err != nil {
 		return err
 	}
+
+	var filtered []model.Task
 	for _, task := range tasks {
 		metaSummary := summarizeMeta(task.MetaJSON)
 		if strings.TrimSpace(*kind) != "" && metaSummary.Kind != strings.TrimSpace(*kind) {
@@ -238,6 +262,13 @@ func runFilter(ctx context.Context, svc service.Service, stdout io.Writer, args 
 		if hasFlag(args, "parent") && !matchesParent(metaSummary.ParentID, *parent) {
 			continue
 		}
+		filtered = append(filtered, task)
+	}
+
+	if jsonMode {
+		return json.NewEncoder(stdout).Encode(filtered)
+	}
+	for _, task := range filtered {
 		fmt.Fprintln(stdout, formatTaskLine(task))
 	}
 	return nil
@@ -289,7 +320,7 @@ func formatTaskLine(t model.Task) string {
 	return line
 }
 
-func runShow(ctx context.Context, svc service.Service, stdout io.Writer, args []string) error {
+func runShow(ctx context.Context, svc service.Service, stdout io.Writer, args []string, jsonMode bool) error {
 	fs := newFlagSet("show")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -304,6 +335,9 @@ func runShow(ctx context.Context, svc service.Service, stdout io.Writer, args []
 	task, err := svc.GetTask(ctx, id)
 	if err != nil {
 		return err
+	}
+	if jsonMode {
+		return json.NewEncoder(stdout).Encode(task)
 	}
 	metaSummary := summarizeMeta(task.MetaJSON)
 	fmt.Fprintf(stdout, "id: %d\n", task.ID)
@@ -326,7 +360,7 @@ func runShow(ctx context.Context, svc service.Service, stdout io.Writer, args []
 	return nil
 }
 
-func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args []string) error {
+func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args []string, jsonMode bool) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gtask update <id> [flags]")
 	}
@@ -425,11 +459,14 @@ func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args 
 	if err != nil {
 		return err
 	}
+	if jsonMode {
+		return json.NewEncoder(stdout).Encode(task)
+	}
 	fmt.Fprintf(stdout, "updated task %d: %s\n", task.ID, task.Title)
 	return nil
 }
 
-func runDelete(ctx context.Context, svc service.Service, stdout io.Writer, args []string) error {
+func runDelete(ctx context.Context, svc service.Service, stdout io.Writer, args []string, jsonMode bool) error {
 	fs := newFlagSet("delete")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -444,6 +481,9 @@ func runDelete(ctx context.Context, svc service.Service, stdout io.Writer, args 
 	if err := svc.DeleteTask(ctx, id); err != nil {
 		return err
 	}
+	if jsonMode {
+		return json.NewEncoder(stdout).Encode(map[string]any{"id": id, "deleted": true})
+	}
 	fmt.Fprintf(stdout, "deleted task %d\n", id)
 	return nil
 }
@@ -453,6 +493,9 @@ func printUsage(w io.Writer) {
 
 Usage:
   gtask [command] [flags]
+
+Global Flags:
+  --json    Output in JSON format
 
 Core Commands:
   add       Create a new task

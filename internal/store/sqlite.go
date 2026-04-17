@@ -69,7 +69,10 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) configure() error {
 	if _, err := s.db.Exec(`PRAGMA busy_timeout = 5000;`); err != nil {
-		return fmt.Errorf("configure sqlite: %w", err)
+		return fmt.Errorf("configure sqlite timeout: %w", err)
+	}
+	if _, err := s.db.Exec(`PRAGMA journal_mode = WAL;`); err != nil {
+		return fmt.Errorf("configure sqlite wal: %w", err)
 	}
 	return nil
 }

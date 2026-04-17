@@ -7,8 +7,11 @@ import (
 	"log"
 	"net"
 	"net/rpc"
+	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/forechoandlook/gtask/internal/model"
@@ -45,10 +48,24 @@ func (d *Daemon) Start() error {
 		return err
 	}
 	log.Printf("gtask daemon listening on %s", addr)
-	return d.serveListener(l)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		sig := <-sigChan
+		log.Printf("received signal %v, shutting down...", sig)
+		cancel()
+		l.Close()
+	}()
+
+	return d.serveListener(ctx, l)
 }
 
-func (d *Daemon) serveListener(l net.Listener) error {
+func (d *Daemon) serveListener(ctx context.Context, l net.Listener) error {
 	rpcServer := rpc.NewServer()
 	srv := &RPCServer{
 		svc:    d.svc,
@@ -59,46 +76,51 @@ func (d *Daemon) serveListener(l net.Listener) error {
 		return err
 	}
 
-	go d.checker()
+	go d.checker(ctx)
 
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			log.Printf("accept err: %v", err)
-			continue
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				log.Printf("accept err: %v", err)
+				continue
+			}
 		}
 		go rpcServer.ServeConn(conn)
 	}
 }
 
-func (d *Daemon) checker() {
+func (d *Daemon) checker(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
-		<-ticker.C
-		ctx := context.Background()
-		tasks, err := d.svc.ListTasksFiltered(ctx, store.ListFilter{IncludeCompleted: true})
-		if err != nil {
-			log.Printf("checker list tasks err: %v", err)
-			continue
-		}
+		select {
+		case <-ctx.Done():
+			log.Printf("checker stopping...")
+			return
+		case <-ticker.C:
+			tasks, err := d.svc.ListTasksFiltered(ctx, store.ListFilter{IncludeCompleted: true})
+			if err != nil {
+				log.Printf("checker list tasks err: %v", err)
+				continue
+			}
 
-		now := time.Now()
-		for _, t := range tasks {
-			if !t.Completed {
-				// Monitoring logic first
-				d.handleMonitor(ctx, t, now)
-
-				// Notification for upcoming/approaching tasks
-				if t.StartAt != nil && isClose(now, *t.StartAt) {
-					d.notify("Task Starting Soon", t.Title)
+			now := time.Now()
+			for _, t := range tasks {
+				if !t.Completed {
+					d.handleMonitor(ctx, t, now)
+					if t.StartAt != nil && isClose(now, *t.StartAt) {
+						d.notify("Task Starting Soon", t.Title)
+					}
+					if t.TargetAt != nil && isClose(now, *t.TargetAt) {
+						d.notify("Task Target Approaching", t.Title)
+					}
+				} else {
+					d.handleRecurrence(ctx, t, now)
 				}
-				if t.TargetAt != nil && isClose(now, *t.TargetAt) {
-					d.notify("Task Target Approaching", t.Title)
-				}
-			} else {
-				// Recurrence logic for completed tasks
-				d.handleRecurrence(ctx, t, now)
 			}
 		}
 	}
@@ -157,7 +179,6 @@ func (d *Daemon) handleMonitor(ctx context.Context, t model.Task, now time.Time)
 			log.Printf("update task %d err: %v", t.ID, updateErr)
 		}
 	} else {
-		// Just update last_monitored_at
 		_, _ = d.svc.UpdateTask(ctx, store.UpdateInput{
 			ID:       t.ID,
 			MetaJSON: &newMeta,
