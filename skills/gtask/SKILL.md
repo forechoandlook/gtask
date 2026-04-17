@@ -14,13 +14,13 @@ metadata:
 gtask add "撰写文档" "第一条备注" # 简易模式
 gtask add --title "修复 Bug" --priority 2 --source "github" --kind "bug" --days 2 --note "初步排查完成" # 完整模式 source表示任务来源，kind表示任务类型，days表示截止时间为多少天后 (也可以用 --target "2026-04-15T23:00:00+08:00" 直接指定截止时间 或者 2026-04-15 23:00 (默认本地时区))
 gtask show <id> # 查看详情
-gtask update 1 --target null # 清除截止时间
+gtask update <id>  --target null # 清除截止时间
 gtask delete <id> # 删除任务
 gtask list # 列出所有待办 精简模式
 gtask list --all # 列出所有任务（包括已完成）
-gtask update 1 --title "新标题" --completed true # 更新标题并标记完成
-gtask update 1 --note "这是追加的第二条备注" # 追加备注 (不覆盖旧备注)
-gtask update 1 --target null # 清除截止时间
+gtask update <id> --title "新标题" --completed true # 更新标题并标记完成
+gtask update <id> --note "这是追加的第二条备注" # 追加备注 (不覆盖旧备注)
+gtask update <id> --target null # 清除截止时间
 ```
 ## 高级筛选:
 ```bash
