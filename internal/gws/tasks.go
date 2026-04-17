@@ -1,16 +1,17 @@
 package gws
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
-	"google.golang.org/api/option"
-	"google.golang.org/api/tasks/v1"
 )
 
 // The following variables are set at build time using -ldflags in CI
@@ -19,8 +20,12 @@ var (
 	BuiltinClientSecret string
 )
 
+const (
+	apiBaseURL = "https://tasks.googleapis.com/tasks/v1"
+)
+
 type Client struct {
-	service *tasks.Service
+	httpClient *http.Client
 }
 
 type TaskList struct {
@@ -28,8 +33,16 @@ type TaskList struct {
 	Title string `json:"title"`
 }
 
+type TaskListListResponse struct {
+	Items []TaskList `json:"items"`
+}
+
 type RemoteTask struct {
-	ID string `json:"id"`
+	ID     string `json:"id,omitempty"`
+	Title  string `json:"title,omitempty"`
+	Notes  string `json:"notes,omitempty"`
+	Due    string `json:"due,omitempty"`
+	Status string `json:"status,omitempty"`
 }
 
 type Credentials struct {
@@ -53,29 +66,39 @@ func NewClient(ctx context.Context) (*Client, error) {
 
 	var oauthConfig *oauth2.Config
 
-	// 1. Try loading user-provided client_secret.json from disk (highest priority)
+	// 1. Try loading user-provided client_secret.json from disk
 	if data, err := os.ReadFile(credsPath); err == nil {
-		oauthConfig, _ = google.ConfigFromJSON(data, tasks.TasksScope)
+		var root struct {
+			Installed Credentials `json:"installed"`
+		}
+		if err := json.Unmarshal(data, &root); err == nil && root.Installed.ClientID != "" {
+			oauthConfig = &oauth2.Config{
+				ClientID:     root.Installed.ClientID,
+				ClientSecret: root.Installed.ClientSecret,
+				Endpoint:     google.Endpoint,
+				Scopes:       []string{"https://www.googleapis.com/auth/tasks"},
+				RedirectURL:  "urn:ietf:wg:oauth:2.0:oob",
+			}
+		}
 	}
 
-	// 2. If not found on disk, use builtin credentials injected during build
+	// 2. Fallback to builtin credentials
 	if oauthConfig == nil && BuiltinClientID != "" && BuiltinClientSecret != "" {
 		oauthConfig = &oauth2.Config{
 			ClientID:     BuiltinClientID,
 			ClientSecret: BuiltinClientSecret,
 			Endpoint:     google.Endpoint,
-			Scopes:       []string{tasks.TasksScope},
+			Scopes:       []string{"https://www.googleapis.com/auth/tasks"},
 			RedirectURL:  "urn:ietf:wg:oauth:2.0:oob",
 		}
-		// Save builtin credentials to disk for user visibility and future overrides
+		// Save builtin for future runs
 		creds := Credentials{ClientID: BuiltinClientID, ClientSecret: BuiltinClientSecret}
 		saveJSON(credsPath, map[string]any{"installed": creds})
 	}
 
-	// 3. Last resort: Ask user for them interactively
+	// 3. Last resort: Ask user
 	if oauthConfig == nil {
 		fmt.Println("Google OAuth credentials not found.")
-		fmt.Println("Please provide your Google Client ID and Client Secret.")
 		fmt.Print("Client ID: ")
 		var cid string
 		fmt.Scan(&cid)
@@ -87,20 +110,18 @@ func NewClient(ctx context.Context) (*Client, error) {
 			return nil, fmt.Errorf("client ID and Secret are required")
 		}
 
-		// Save them as a simple json for future runs
 		creds := Credentials{ClientID: cid, ClientSecret: sec}
 		saveJSON(credsPath, map[string]any{"installed": creds})
-		
 		oauthConfig = &oauth2.Config{
 			ClientID:     cid,
 			ClientSecret: sec,
 			Endpoint:     google.Endpoint,
-			Scopes:       []string{tasks.TasksScope},
+			Scopes:       []string{"https://www.googleapis.com/auth/tasks"},
 			RedirectURL:  "urn:ietf:wg:oauth:2.0:oob",
 		}
 	}
 
-	// Load or Ask for User Token
+	// Token handling
 	token, err := tokenFromFile(tokenPath)
 	if err != nil {
 		token, err = getTokenFromWeb(oauthConfig)
@@ -110,13 +131,72 @@ func NewClient(ctx context.Context) (*Client, error) {
 		saveJSON(tokenPath, token)
 	}
 
-	httpClient := oauthConfig.Client(ctx, token)
-	srv, err := tasks.NewService(ctx, option.WithHTTPClient(httpClient))
+	return &Client{
+		httpClient: oauthConfig.Client(ctx, token),
+	}, nil
+}
+
+func (c *Client) ListTaskLists(ctx context.Context) ([]TaskList, error) {
+	url := fmt.Sprintf("%s/users/@me/lists", apiBaseURL)
+	resp, err := c.httpClient.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("create tasks service: %w", err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("api error %d: %s", resp.StatusCode, string(body))
 	}
 
-	return &Client{service: srv}, nil
+	var res TaskListListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+	return res.Items, nil
+}
+
+func (c *Client) InsertTask(ctx context.Context, taskListID string, payload map[string]any) (RemoteTask, error) {
+	url := fmt.Sprintf("%s/lists/%s/tasks", apiBaseURL, taskListID)
+	data, _ := json.Marshal(payload)
+	
+	resp, err := c.httpClient.Post(url, "application/json", bytes.NewReader(data))
+	if err != nil {
+		return RemoteTask{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return RemoteTask{}, fmt.Errorf("api error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var task RemoteTask
+	json.NewDecoder(resp.Body).Decode(&task)
+	return task, nil
+}
+
+func (c *Client) UpdateTask(ctx context.Context, taskListID, taskID string, payload map[string]any) (RemoteTask, error) {
+	url := fmt.Sprintf("%s/lists/%s/tasks/%s", apiBaseURL, taskListID, taskID)
+	data, _ := json.Marshal(payload)
+	
+	req, _ := http.NewRequestWithContext(ctx, "PATCH", url, bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return RemoteTask{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return RemoteTask{}, fmt.Errorf("api error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var task RemoteTask
+	json.NewDecoder(resp.Body).Decode(&task)
+	return task, nil
 }
 
 func getTokenFromWeb(config *oauth2.Config) (*oauth2.Token, error) {
@@ -125,14 +205,8 @@ func getTokenFromWeb(config *oauth2.Config) (*oauth2.Token, error) {
 		"authorization code: \n%v\n", authURL)
 	var authCode string
 	fmt.Print("Authorization Code: ")
-	if _, err := fmt.Scan(&authCode); err != nil {
-		return nil, fmt.Errorf("unable to read authorization code: %v", err)
-	}
-	tok, err := config.Exchange(context.TODO(), authCode)
-	if err != nil {
-		return nil, fmt.Errorf("unable to retrieve token from web: %v", err)
-	}
-	return tok, nil
+	fmt.Scan(&authCode)
+	return config.Exchange(context.TODO(), authCode)
 }
 
 func tokenFromFile(file string) (*oauth2.Token, error) {
@@ -153,58 +227,4 @@ func saveJSON(path string, v any) {
 	}
 	defer f.Close()
 	json.NewEncoder(f).Encode(v)
-}
-
-func (c *Client) ListTaskLists(ctx context.Context) ([]TaskList, error) {
-	res, err := c.service.Tasklists.List().Context(ctx).Do()
-	if err != nil {
-		return nil, err
-	}
-	var lists []TaskList
-	for _, item := range res.Items {
-		lists = append(lists, TaskList{ID: item.Id, Title: item.Title})
-	}
-	return lists, nil
-}
-
-func (c *Client) InsertTask(ctx context.Context, taskListID string, payload map[string]any) (RemoteTask, error) {
-	task := &tasks.Task{}
-	if v, ok := payload["title"].(string); ok {
-		task.Title = v
-	}
-	if v, ok := payload["notes"].(string); ok {
-		task.Notes = v
-	}
-	if v, ok := payload["due"].(string); ok {
-		task.Due = v
-	}
-	if v, ok := payload["status"].(string); ok {
-		task.Status = v
-	}
-	res, err := c.service.Tasks.Insert(taskListID, task).Context(ctx).Do()
-	if err != nil {
-		return RemoteTask{}, err
-	}
-	return RemoteTask{ID: res.Id}, nil
-}
-
-func (c *Client) UpdateTask(ctx context.Context, taskListID, taskID string, payload map[string]any) (RemoteTask, error) {
-	task := &tasks.Task{}
-	if v, ok := payload["title"].(string); ok {
-		task.Title = v
-	}
-	if v, ok := payload["notes"].(string); ok {
-		task.Notes = v
-	}
-	if v, ok := payload["due"].(string); ok {
-		task.Due = v
-	}
-	if v, ok := payload["status"].(string); ok {
-		task.Status = v
-	}
-	res, err := c.service.Tasks.Patch(taskListID, taskID, task).Context(ctx).Do()
-	if err != nil {
-		return RemoteTask{}, err
-	}
-	return RemoteTask{ID: res.Id}, nil
 }
