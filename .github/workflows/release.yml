@@ -38,7 +38,11 @@ jobs:
           GOARCH: ${{ matrix.arch }}
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags="-s -w -X github.com/forechoandlook/gtask/internal/version.Version=${GITHUB_REF_NAME#v} -X github.com/forechoandlook/gtask/internal/version.Commit=${GITHUB_SHA::7}" \
+          go build -trimpath -ldflags="-s -w \
+            -X github.com/forechoandlook/gtask/internal/version.Version=${GITHUB_REF_NAME#v} \
+            -X github.com/forechoandlook/gtask/internal/version.Commit=${GITHUB_SHA::7} \
+            -X github.com/forechoandlook/gtask/internal/gws.BuiltinClientID=${{ secrets.GOOGLE_CLIENT_ID }} \
+            -X github.com/forechoandlook/gtask/internal/gws.BuiltinClientSecret=${{ secrets.GOOGLE_CLIENT_SECRET }}" \
             -o dist/gtask_${{ matrix.os }}_${{ matrix.arch }} ./cmd/gtask
 
       - name: Upload artifacts

@@ -13,6 +13,12 @@ import (
 	"google.golang.org/api/tasks/v1"
 )
 
+// The following variables can be set at build time using -ldflags
+var (
+	BuiltinClientID     string
+	BuiltinClientSecret string
+)
+
 type Client struct {
 	service *tasks.Service
 }
@@ -26,7 +32,6 @@ type RemoteTask struct {
 	ID string `json:"id"`
 }
 
-// Credentials represents the Google OAuth client info
 type Credentials struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
@@ -42,15 +47,26 @@ func NewClient(ctx context.Context) (*Client, error) {
 	credsPath := filepath.Join(gtaskDir, "credentials.json")
 	tokenPath := filepath.Join(gtaskDir, "token.json")
 
-	// 1. Ensure gtask directory exists
 	if err := os.MkdirAll(gtaskDir, 0755); err != nil {
 		return nil, fmt.Errorf("create gtask dir: %w", err)
 	}
 
-	// 2. Load or Ask for Client Credentials
-	config, err := loadConfig(credsPath)
-	if err != nil {
-		// If not found or invalid, ask interactively
+	var oauthConfig *oauth2.Config
+
+	// 1. Try loading user-provided credentials from disk
+	if conf, err := loadConfig(credsPath); err == nil {
+		oauthConfig = conf
+	} else if BuiltinClientID != "" && BuiltinClientSecret != "" {
+		// 2. Try using builtin credentials injected during build
+		oauthConfig = &oauth2.Config{
+			ClientID:     BuiltinClientID,
+			ClientSecret: BuiltinClientSecret,
+			Endpoint:     google.Endpoint,
+			Scopes:       []string{tasks.TasksScope},
+			RedirectURL:  "urn:ietf:wg:oauth:2.0:oob",
+		}
+	} else {
+		// 3. Last resort: Ask user for them
 		fmt.Println("Google OAuth credentials not found.")
 		fmt.Println("Please provide your Google Client ID and Client Secret.")
 		fmt.Print("Client ID: ")
@@ -66,8 +82,7 @@ func NewClient(ctx context.Context) (*Client, error) {
 
 		creds := Credentials{ClientID: cid, ClientSecret: sec}
 		saveJSON(credsPath, creds)
-
-		config = &oauth2.Config{
+		oauthConfig = &oauth2.Config{
 			ClientID:     cid,
 			ClientSecret: sec,
 			Endpoint:     google.Endpoint,
@@ -76,17 +91,17 @@ func NewClient(ctx context.Context) (*Client, error) {
 		}
 	}
 
-	// 3. Load or Ask for User Token
+	// Load or Ask for User Token
 	token, err := tokenFromFile(tokenPath)
 	if err != nil {
-		token, err = getTokenFromWeb(config)
+		token, err = getTokenFromWeb(oauthConfig)
 		if err != nil {
 			return nil, err
 		}
 		saveJSON(tokenPath, token)
 	}
 
-	httpClient := config.Client(ctx, token)
+	httpClient := oauthConfig.Client(ctx, token)
 	srv, err := tasks.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
 		return nil, fmt.Errorf("create tasks service: %w", err)
@@ -101,12 +116,10 @@ func loadConfig(path string) (*oauth2.Config, error) {
 		return nil, err
 	}
 	defer f.Close()
-
 	var creds Credentials
 	if err := json.NewDecoder(f).Decode(&creds); err != nil {
 		return nil, err
 	}
-
 	return &oauth2.Config{
 		ClientID:     creds.ClientID,
 		ClientSecret: creds.ClientSecret,
@@ -120,13 +133,11 @@ func getTokenFromWeb(config *oauth2.Config) (*oauth2.Token, error) {
 	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
 	fmt.Printf("Go to the following link in your browser then type the "+
 		"authorization code: \n%v\n", authURL)
-
 	var authCode string
 	fmt.Print("Authorization Code: ")
 	if _, err := fmt.Scan(&authCode); err != nil {
 		return nil, fmt.Errorf("unable to read authorization code: %v", err)
 	}
-
 	tok, err := config.Exchange(context.TODO(), authCode)
 	if err != nil {
 		return nil, fmt.Errorf("unable to retrieve token from web: %v", err)
@@ -148,7 +159,6 @@ func tokenFromFile(file string) (*oauth2.Token, error) {
 func saveJSON(path string, v any) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		fmt.Printf("Warning: failed to save %s: %v\n", path, err)
 		return
 	}
 	defer f.Close()
@@ -181,7 +191,6 @@ func (c *Client) InsertTask(ctx context.Context, taskListID string, payload map[
 	if v, ok := payload["status"].(string); ok {
 		task.Status = v
 	}
-
 	res, err := c.service.Tasks.Insert(taskListID, task).Context(ctx).Do()
 	if err != nil {
 		return RemoteTask{}, err
@@ -203,7 +212,6 @@ func (c *Client) UpdateTask(ctx context.Context, taskListID, taskID string, payl
 	if v, ok := payload["status"].(string); ok {
 		task.Status = v
 	}
-
 	res, err := c.service.Tasks.Patch(taskListID, taskID, task).Context(ctx).Do()
 	if err != nil {
 		return RemoteTask{}, err
