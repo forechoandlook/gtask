@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 )
@@ -81,6 +82,35 @@ func TestFilterAndDeleteTask(t *testing.T) {
 	_, err = st.GetTask(ctx, beta.ID)
 	if err == nil {
 		t.Fatal("expected task to be deleted")
+	}
+}
+
+func TestUpdateRecordsCompletedAt(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "gtask.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	ctx := context.Background()
+	task, _ := st.AddTask(ctx, AddInput{Title: "to complete"})
+
+	done := true
+	updated, err := st.UpdateTask(ctx, UpdateInput{
+		ID:        task.ID,
+		Completed: &done,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify meta contains completed_at
+	var meta map[string]any
+	if err := json.Unmarshal([]byte(updated.MetaJSON), &meta); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := meta["completed_at"].(string); !ok {
+		t.Fatalf("expected completed_at in meta, got: %s", updated.MetaJSON)
 	}
 }
 

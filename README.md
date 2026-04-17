@@ -15,7 +15,11 @@
 
 ## 🛠️ 前置条件
 
-无需额外工具。首次运行 `gtask sync` 时，程序会引导你通过浏览器完成 Google 账号授权（Token 将安全存储在 `~/.gtask/token.json`）。
+无需额外工具。首次运行 `gtask sync` 时，程序会：
+1. 自动在 `~/.gtask/client_secret.json` 中填充内置的官方凭据（如果该文件不存在）。
+2. 引导你通过浏览器完成 Google 账号授权（Token 将安全存储在 `~/.gtask/token.json`）。
+
+如果你希望使用自定义的 Google Cloud 项目凭据，只需手动修改 `~/.gtask/client_secret.json` 即可。
 
 ## 🚀 安装
 
