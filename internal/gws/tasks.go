@@ -58,6 +58,7 @@ func NewClient(ctx context.Context) (*Client, error) {
 
 	gtaskDir := filepath.Join(home, ".gtask")
 	credsPath := filepath.Join(gtaskDir, "client_secret.json")
+	oldCredsPath := filepath.Join(gtaskDir, "credentials.json")
 	tokenPath := filepath.Join(gtaskDir, "token.json")
 
 	if err := os.MkdirAll(gtaskDir, 0755); err != nil {
@@ -66,8 +67,14 @@ func NewClient(ctx context.Context) (*Client, error) {
 
 	var oauthConfig *oauth2.Config
 
-	// 1. Try loading user-provided client_secret.json from disk
-	if data, err := os.ReadFile(credsPath); err == nil {
+	// 1. Try loading user-provided client_secret.json or credentials.json
+	data, err := os.ReadFile(credsPath)
+	if err != nil {
+		data, err = os.ReadFile(oldCredsPath)
+	}
+	
+	if err == nil {
+		// Try parsing Google's standard format first {"installed": {...}}
 		var root struct {
 			Installed Credentials `json:"installed"`
 		}
@@ -78,6 +85,18 @@ func NewClient(ctx context.Context) (*Client, error) {
 				Endpoint:     google.Endpoint,
 				Scopes:       []string{"https://www.googleapis.com/auth/tasks"},
 				RedirectURL:  "urn:ietf:wg:oauth:2.0:oob",
+			}
+		} else {
+			// Fallback: Try parsing the simple Credentials format
+			var simple Credentials
+			if err := json.Unmarshal(data, &simple); err == nil && simple.ClientID != "" {
+				oauthConfig = &oauth2.Config{
+					ClientID:     simple.ClientID,
+					ClientSecret: simple.ClientSecret,
+					Endpoint:     google.Endpoint,
+					Scopes:       []string{"https://www.googleapis.com/auth/tasks"},
+					RedirectURL:  "urn:ietf:wg:oauth:2.0:oob",
+				}
 			}
 		}
 	}
