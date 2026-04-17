@@ -59,8 +59,11 @@ jobs:
         run: |
           mkdir -p upload
           find dist -type f -name 'gtask_*' -exec mv {} upload/ \;
+          echo "${GITHUB_REF_NAME#v}" > upload/VERSION
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: upload/gtask_*
+          files: |
+            upload/gtask_*
+            upload/VERSION

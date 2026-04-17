@@ -6,16 +6,18 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	"github.com/forechoandlook/gtask/internal/config"
 	"github.com/forechoandlook/gtask/internal/daemon"
+	"github.com/forechoandlook/gtask/internal/model"
 	"github.com/forechoandlook/gtask/internal/service"
 	"github.com/forechoandlook/gtask/internal/store"
-	"net"
 )
 
 func getHostPort(args []string) (string, string, []string) {
@@ -113,25 +115,34 @@ func runAdd(ctx context.Context, svc service.Service, stdout io.Writer, args []s
 	title := fs.String("title", "", "task title")
 	priority := fs.Int("priority", 0, "priority")
 	source := fs.String("source", "", "task source")
-	kind := fs.String("kind", "", "task kind stored in meta, for example text or command")
-	parent := fs.Int64("parent", 0, "parent task id stored in meta.parent_id")
-	startAt := fs.String("start", "", "start time, supports RFC3339 or 'YYYY-MM-DD HH'")
-	targetAt := fs.String("target", "", "target time, supports RFC3339 or 'YYYY-MM-DD HH'")
-	startDays := fs.Int("start-days", 0, "set start time to N days from now")
-	days := fs.Int("days", 0, "set target time to N days from now")
+	kind := fs.String("kind", "", "task kind")
+	parent := fs.Int64("parent", 0, "parent task id")
+	startAt := fs.String("start", "", "start time")
+	targetAt := fs.String("target", "", "target time")
+	startDays := fs.Int("start-days", 0, "start days from now")
+	days := fs.Int("days", 0, "target days from now")
 	meta := fs.String("meta", "{}", "json metadata")
 	note := fs.String("note", "", "initial note")
+	monitorCmd := fs.String("monitor-cmd", "", "command to run periodically")
+	monitorInterval := fs.String("monitor-interval", "10m", "how often to run monitor command")
+	recurrence := fs.String("recurrence", "", "recurrence interval (e.g. 24h)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	finalTitle := *title
 	if strings.TrimSpace(finalTitle) == "" && fs.NArg() > 0 {
-		finalTitle = fs.Arg(0)
+		arg0 := fs.Arg(0)
+		if !strings.HasPrefix(arg0, "-") {
+			finalTitle = arg0
+		}
 	}
 	finalNote := *note
 	if finalNote == "" && fs.NArg() > 1 {
-		finalNote = fs.Arg(1)
+		arg1 := fs.Arg(1)
+		if !strings.HasPrefix(arg1, "-") {
+			finalNote = arg1
+		}
 	}
 
 	if strings.TrimSpace(finalTitle) == "" {
@@ -140,7 +151,14 @@ func runAdd(ctx context.Context, svc service.Service, stdout io.Writer, args []s
 	if !json.Valid([]byte(*meta)) {
 		return fmt.Errorf("meta must be valid json")
 	}
-	metaJSON, err := mergeMeta(*meta, strings.TrimSpace(*kind), hasFlag(args, "parent"), *parent)
+	metaJSON, err := mergeMeta(*meta, metaUpdates{
+		kind:            strings.TrimSpace(*kind),
+		parentSet:       hasFlag(args, "parent"),
+		parent:          *parent,
+		monitorCmd:      *monitorCmd,
+		monitorInterval: *monitorInterval,
+		recurrence:      *recurrence,
+	})
 	if err != nil {
 		return err
 	}
@@ -171,32 +189,21 @@ func runList(ctx context.Context, svc service.Service, stdout io.Writer, args []
 		return err
 	}
 	for _, task := range tasks {
-		metaSummary := summarizeMeta(task.MetaJSON)
-		fmt.Fprintf(stdout, "%d\t[%s]\tp%d\t%s\tsource=%s\tkind=%s\tparent=%s\ttarget=%s\tsynced=%s\n",
-			task.ID,
-			status(task.Completed),
-			task.Priority,
-			task.Title,
-			emptyDash(task.Source),
-			emptyDash(metaSummary.Kind),
-			formatParent(metaSummary.ParentID),
-			formatMaybe(task.TargetAt),
-			formatMaybe(task.LastSyncedAt),
-		)
+		fmt.Fprintln(stdout, formatTaskLine(task))
 	}
 	return nil
 }
 
 func runFilter(ctx context.Context, svc service.Service, stdout io.Writer, args []string) error {
 	fs := newFlagSet("filter")
-	all := fs.Bool("all", false, "include completed tasks unless --completed is set")
-	source := fs.String("source", "", "filter by exact source")
-	query := fs.String("query", "", "substring match against title/meta/notes")
+	all := fs.Bool("all", false, "include completed tasks")
+	source := fs.String("source", "", "filter by source")
+	query := fs.String("query", "", "keyword search")
 	completed := fs.String("completed", "", "true or false")
-	kind := fs.String("kind", "", "filter by meta.kind")
-	parent := fs.Int64("parent", 0, "filter by meta.parent_id")
-	pmin := fs.Int("priority-min", 0, "minimum priority")
-	pmax := fs.Int("priority-max", 0, "maximum priority")
+	kind := fs.String("kind", "", "filter by kind")
+	parent := fs.Int64("parent", 0, "filter by parent_id")
+	pmin := fs.Int("priority-min", 0, "min priority")
+	pmax := fs.Int("priority-max", 0, "max priority")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -214,7 +221,7 @@ func runFilter(ctx context.Context, svc service.Service, stdout io.Writer, args 
 	if strings.TrimSpace(*completed) != "" {
 		v, err := strconv.ParseBool(*completed)
 		if err != nil {
-			return fmt.Errorf("parse completed: %w", err)
+			return err
 		}
 		filter.Completed = &v
 	}
@@ -230,19 +237,56 @@ func runFilter(ctx context.Context, svc service.Service, stdout io.Writer, args 
 		if hasFlag(args, "parent") && !matchesParent(metaSummary.ParentID, *parent) {
 			continue
 		}
-		fmt.Fprintf(stdout, "%d\t[%s]\tp%d\t%s\tsource=%s\tkind=%s\tparent=%s\ttarget=%s\tsynced=%s\n",
-			task.ID,
-			status(task.Completed),
-			task.Priority,
-			task.Title,
-			emptyDash(task.Source),
-			emptyDash(metaSummary.Kind),
-			formatParent(metaSummary.ParentID),
-			formatMaybe(task.TargetAt),
-			formatMaybe(task.LastSyncedAt),
-		)
+		fmt.Fprintln(stdout, formatTaskLine(task))
 	}
 	return nil
+}
+
+func formatTaskLine(t model.Task) string {
+	meta := summarizeMeta(t.MetaJSON)
+	
+	// Status and ID
+	statusIcon := "[ ]"
+	if t.Completed {
+		statusIcon = "[x]"
+	}
+	
+	line := fmt.Sprintf("%-3d %s %s", t.ID, statusIcon, t.Title)
+
+	// Tags (Priority, Source, Kind)
+	var tags []string
+	if t.Priority != 0 {
+		tags = append(tags, fmt.Sprintf("p%d", t.Priority))
+	}
+	if t.Source != "" {
+		tags = append(tags, t.Source)
+	}
+	if meta.Kind != "" {
+		tags = append(tags, meta.Kind)
+	}
+	if len(tags) > 0 {
+		line += " (" + strings.Join(tags, "·") + ")"
+	}
+
+	// Time
+	if t.TargetAt != nil {
+		rel := humanize.RelTime(*t.TargetAt, time.Now(), "ago", "from now")
+		line += " Due: " + rel
+	}
+
+	// Recurring/Monitor indicators
+	var indicators []string
+	if strings.Contains(t.MetaJSON, "recurrence") {
+		indicators = append(indicators, "↺")
+	}
+	if strings.Contains(t.MetaJSON, "monitor_cmd") {
+		indicators = append(indicators, "👁")
+	}
+	if len(indicators) > 0 {
+		line += " " + strings.Join(indicators, "")
+	}
+
+	return line
 }
 
 func runShow(ctx context.Context, svc service.Service, stdout io.Writer, args []string) error {
@@ -284,7 +328,7 @@ func runShow(ctx context.Context, svc service.Service, stdout io.Writer, args []
 
 func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: gtask update <id> [flags]")
+		return runSelfUpgrade(ctx, stdout)
 	}
 	id, err := strconv.ParseInt(args[0], 10, 64)
 	if err != nil {
@@ -296,13 +340,16 @@ func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args 
 	source := fs.String("source", "", "new source")
 	kind := fs.String("kind", "", "set meta.kind")
 	parent := fs.String("parent", "", "set meta.parent_id, or null to clear")
-	startAt := fs.String("start", "", "set start time, supports RFC3339, 'YYYY-MM-DD HH', or null")
-	targetAt := fs.String("target", "", "set target time, supports RFC3339, 'YYYY-MM-DD HH', or null")
-	startDays := fs.Int("start-days", 0, "set start time to N days from now")
-	days := fs.Int("days", 0, "set target time to N days from now")
+	startAt := fs.String("start", "", "set start time")
+	targetAt := fs.String("target", "", "set target time")
+	startDays := fs.Int("start-days", 0, "set start days")
+	days := fs.Int("days", 0, "set target days")
 	meta := fs.String("meta", "", "replace metadata json")
 	completed := fs.String("completed", "", "true or false")
 	note := fs.String("note", "", "append note")
+	monitorCmd := fs.String("monitor-cmd", "", "command to run periodically")
+	monitorInterval := fs.String("monitor-interval", "", "how often to run monitor command")
+	recurrence := fs.String("recurrence", "", "recurrence interval")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -333,7 +380,8 @@ func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args 
 		v := futureDays(*days)
 		in.TargetAt = &v
 	}
-	if strings.TrimSpace(*meta) != "" || hasFlag(args, "kind") || hasFlag(args, "parent") {
+	if strings.TrimSpace(*meta) != "" || hasFlag(args, "kind") || hasFlag(args, "parent") ||
+		hasFlag(args, "monitor-cmd") || hasFlag(args, "monitor-interval") || hasFlag(args, "recurrence") {
 		baseMeta := "{}"
 		current, err := svc.GetTask(ctx, id)
 		if err != nil {
@@ -347,7 +395,14 @@ func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args 
 		if err != nil {
 			return err
 		}
-		metaJSON, err := mergeMeta(baseMeta, strings.TrimSpace(*kind), parentSet, parentValue)
+		metaJSON, err := mergeMeta(baseMeta, metaUpdates{
+			kind:            strings.TrimSpace(*kind),
+			parentSet:       parentSet,
+			parent:          parentValue,
+			monitorCmd:      *monitorCmd,
+			monitorInterval: *monitorInterval,
+			recurrence:      *recurrence,
+		})
 		if err != nil {
 			return err
 		}
@@ -394,45 +449,82 @@ func runDelete(ctx context.Context, svc service.Service, stdout io.Writer, args 
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "gtask: local SQLite-backed task CLI with Google Tasks sync")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Data files:")
-	fmt.Fprintln(w, "  ~/.gtask/gtask.db")
-	fmt.Fprintln(w, "  ~/.gtask/config.json")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Commands:")
-	fmt.Fprintln(w, "  gtask --version")
-	fmt.Fprintln(w, "  gtask add [title] [note] [--title <title>] [--priority N] [--source X] [--kind K] [--parent ID] [--start TIME] [--start-days N] [--target TIME|--days N] [--meta JSON] [--note TEXT]")
-	fmt.Fprintln(w, "  gtask list [--all]")
-	fmt.Fprintln(w, "  gtask filter [--all] [--source X] [--kind K] [--parent ID] [--query TEXT] [--completed true|false] [--priority-min N] [--priority-max N]")
-	fmt.Fprintln(w, "  gtask show <id>")
-	fmt.Fprintln(w, "  gtask update <id> [--title T] [--priority N] [--source X] [--kind K] [--parent ID|null] [--start TIME|null] [--start-days N] [--target TIME|null] [--days N] [--meta JSON] [--completed true|false] [--note TEXT]")
-	fmt.Fprintln(w, "  gtask delete <id>")
-	fmt.Fprintln(w, "  gtask sync")
-	fmt.Fprintln(w, "  gtask daemon [--host 127.0.0.1] [--port 8765]")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Time formats:")
-	fmt.Fprintln(w, "  RFC3339 example: 2026-04-15T23:00:00+08:00")
-	fmt.Fprintln(w, "  Short form:      2026-04-15 23")
-	fmt.Fprintln(w, "  Relative days:   --days 3")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Notes:")
-	fmt.Fprintln(w, "  RFC3339 is an internet timestamp format like 2026-04-15T23:00:00+08:00.")
-	fmt.Fprintln(w, "  --days N means target time = now + N days.")
-	fmt.Fprintln(w, "  --start-days N means start time = now + N days.")
-	fmt.Fprintln(w, "  --kind and --parent are stored in meta as meta.kind and meta.parent_id.")
-	fmt.Fprintln(w, "  update --start null or --target null clears that field.")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Examples:")
-	fmt.Fprintln(w, `  gtask add --title "write docs" --priority 2 --source aistudio --kind text --days 3 --note "first note"`)
-	fmt.Fprintln(w, "  gtask add \"write docs\" \"first note\" --priority 2 --source aistudio --kind text --days 3")
-	fmt.Fprintln(w, `  gtask add --title "run sync" --kind command --parent 4 --meta '{"cmd":"opencli sync","cwd":"/Users/zzwy/tmp/opencli-rs"}'`)
-	fmt.Fprintln(w, `  gtask add --title "night run" --target "2026-04-20 21"`)
-	fmt.Fprintln(w, `  gtask filter --source idea1 --kind command`)
-	fmt.Fprintln(w, `  gtask show 4`)
-	fmt.Fprintln(w, `  gtask update 1 --kind command --parent 4 --completed true --note "done locally"`)
-	fmt.Fprintln(w, `  gtask delete 3`)
-	fmt.Fprintln(w, `  gtask sync`)
+	const help = `gtask: A local-first task CLI with Google Tasks sync
+
+Usage:
+  gtask [command] [flags]
+
+Core Commands:
+  add       Create a new task
+  list      List pending tasks (use --all to see completed)
+  filter    Search and filter tasks with advanced criteria
+  show      Show full details of a single task by ID
+  update    Modify a task (with <id>) or upgrade gtask (without <id>)
+  delete    Remove a task by ID
+  sync      Synchronize local tasks with Google Tasks (requires 'gws' CLI)
+  daemon    Start background RPC server for faster access and notifications
+  version   Print version information
+
+Command Details:
+  add [title] [note]   Quick add or use flags for full control.
+     --title TEXT      Task title (required if first positional arg is empty)
+     --priority N      Task priority (default 0)
+     --source TEXT     Task source (e.g. github, manual)
+     --kind TEXT       Task kind (stored in meta.kind)
+     --parent ID       Parent task ID (stored in meta.parent_id)
+     --target TIME     Target date/time (e.g. '2026-04-15 23')
+     --days N          Target time set to N days from now
+     --note TEXT       Initial note for the task
+     --meta JSON       Direct JSON metadata
+     --monitor-cmd STR Run command periodically; completes task if exit code is 0
+     --monitor-interval DUR How often to run monitor (default 10m, e.g. 1m, 1h)
+     --recurrence DUR  Repeat task after completion (e.g. 24h, 1h)
+
+  filter               Search tasks across all fields.
+     --query TEXT      Keyword search in title, meta, and notes
+     --source TEXT     Filter by exact source
+     --kind TEXT       Filter by meta.kind
+     --parent ID       Filter by meta.parent_id
+     --completed B     Filter by status (true/false)
+     --priority-min N  Minimum priority
+     --priority-max N  Maximum priority
+
+  update <id>
+     --completed B     Mark as done (true) or todo (false)
+     --note TEXT       Append a new note to the notes history
+     --target null     Use 'null' to clear target/start time fields
+     --recurrence DUR  Update recurrence interval
+
+  update (without <id>)
+     Checks for a new version and upgrades the gtask binary.
+
+Time Formats:
+  RFC3339:         2026-04-15T23:00:00+08:00
+  Short form:      2026-04-15 23:30  (local time)
+  Date only:       2026-04-15        (00:00 local time)
+  Relative days:   --days 3          (Current time + 3 days)
+
+Duration Formats:
+  10m, 1h, 24h, 168h (7 days)
+
+Environment Variables:
+  GTASK_HOST       Daemon host (default 127.0.0.1)
+  GTASK_PORT       Daemon port (default 8765)
+
+Data Locations:
+  SQLite DB:       ~/.gtask/gtask.db
+  Config:          ~/.gtask/config.json
+
+Examples:
+  gtask add "Buy milk" "Don't forget the low-fat one" --days 1
+  gtask add "Wait for deploy" --monitor-cmd "curl -sf http://app.com/v | grep 1.2.0" --monitor-interval 1m
+  gtask add "Daily backup" --recurrence 24h
+  gtask list
+  gtask filter --query "milk"
+  gtask update 1 --completed true --note "Done at the local store"
+  gtask sync
+`
+	fmt.Fprint(w, help)
 }
 
 func parseTime(v string) *time.Time {
@@ -487,7 +579,16 @@ type metaSummary struct {
 	ParentID *int64
 }
 
-func mergeMeta(raw, kind string, parentSet bool, parent int64) (string, error) {
+type metaUpdates struct {
+	kind            string
+	parentSet       bool
+	parent          int64
+	monitorCmd      string
+	monitorInterval string
+	recurrence      string
+}
+
+func mergeMeta(raw string, up metaUpdates) (string, error) {
 	var meta map[string]any
 	if strings.TrimSpace(raw) == "" {
 		raw = "{}"
@@ -498,15 +599,24 @@ func mergeMeta(raw, kind string, parentSet bool, parent int64) (string, error) {
 	if meta == nil {
 		meta = map[string]any{}
 	}
-	if strings.TrimSpace(kind) != "" {
-		meta["kind"] = strings.TrimSpace(kind)
+	if up.kind != "" {
+		meta["kind"] = up.kind
 	}
-	if parentSet {
-		if parent > 0 {
-			meta["parent_id"] = parent
+	if up.parentSet {
+		if up.parent > 0 {
+			meta["parent_id"] = up.parent
 		} else {
 			delete(meta, "parent_id")
 		}
+	}
+	if up.monitorCmd != "" {
+		meta["monitor_cmd"] = up.monitorCmd
+	}
+	if up.monitorInterval != "" {
+		meta["monitor_interval"] = up.monitorInterval
+	}
+	if up.recurrence != "" {
+		meta["recurrence"] = up.recurrence
 	}
 	out, err := json.Marshal(meta)
 	if err != nil {
@@ -611,7 +721,7 @@ func newFlagSet(name string) *flag.FlagSet {
 	fs.Usage = func() {
 		switch name {
 		case "add":
-			fmt.Fprintln(os.Stderr, "usage: gtask add [title] [note] [--title <title>] [--priority N] [--source X] [--kind K] [--parent ID] [--start TIME] [--start-days N] [--target TIME] [--days N] [--meta JSON] [--note TEXT]")
+			fmt.Fprintln(os.Stderr, "usage: gtask add [title] [note] [--title <title>] [--priority N] [--source X] [--kind K] [--parent ID] [--start TIME] [--start-days N] [--target TIME] [--days N] [--meta JSON] [--note TEXT] [--monitor-cmd STR] [--monitor-interval DUR] [--recurrence DUR]")
 		case "list":
 			fmt.Fprintln(os.Stderr, "usage: gtask list [--all]")
 		case "filter":
@@ -619,7 +729,7 @@ func newFlagSet(name string) *flag.FlagSet {
 		case "show":
 			fmt.Fprintln(os.Stderr, "usage: gtask show <id>")
 		case "update":
-			fmt.Fprintln(os.Stderr, "usage: gtask update <id> [--title T] [--priority N] [--source X] [--kind K] [--parent ID|null] [--start TIME|null] [--start-days N] [--target TIME|null] [--days N] [--meta JSON] [--completed true|false] [--note TEXT]")
+			fmt.Fprintln(os.Stderr, "usage: gtask update <id> [--title T] [--priority N] [--source X] [--kind K] [--parent ID|null] [--start TIME|null] [--start-days N] [--target TIME|null] [--days N] [--meta JSON] [--completed true|false] [--note TEXT] [--monitor-cmd STR] [--monitor-interval DUR] [--recurrence DUR]")
 		case "delete":
 			fmt.Fprintln(os.Stderr, "usage: gtask delete <id>")
 		case "daemon":

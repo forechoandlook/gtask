@@ -234,7 +234,20 @@ func (s *Store) UpdateTask(ctx context.Context, in UpdateInput) (model.Task, err
 		task.MetaJSON = *in.MetaJSON
 	}
 	if in.Completed != nil {
+		oldCompleted := task.Completed
 		task.Completed = *in.Completed
+		if task.Completed && !oldCompleted {
+			// Marked as completed, record timestamp in meta
+			var meta map[string]any
+			if err := json.Unmarshal([]byte(task.MetaJSON), &meta); err == nil {
+				if meta == nil {
+					meta = make(map[string]any)
+				}
+				meta["completed_at"] = time.Now().UTC().Format(time.RFC3339)
+				newMeta, _ := json.Marshal(meta)
+				task.MetaJSON = string(newMeta)
+			}
+		}
 	}
 	if strings.TrimSpace(in.AppendNote) != "" {
 		var notes []model.Note

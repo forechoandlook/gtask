@@ -16,7 +16,7 @@ import (
 type Syncer struct {
 	cfg   config.Config
 	store *store.Store
-	gws   gws.Client
+	gws   *gws.Client
 }
 
 func New(cfg config.Config, st *store.Store) *Syncer {
@@ -24,6 +24,12 @@ func New(cfg config.Config, st *store.Store) *Syncer {
 }
 
 func (s *Syncer) Sync(ctx context.Context) (string, error) {
+	client, err := gws.NewClient(ctx)
+	if err != nil {
+		return "", fmt.Errorf("init google client: %w", err)
+	}
+	s.gws = client
+
 	listID, err := s.resolveTaskListID(ctx)
 	if err != nil {
 		return "", err
