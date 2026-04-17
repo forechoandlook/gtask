@@ -67,6 +67,9 @@ func NewClient(ctx context.Context) (*Client, error) {
 			Scopes:       []string{tasks.TasksScope},
 			RedirectURL:  "urn:ietf:wg:oauth:2.0:oob",
 		}
+		// Save builtin credentials to disk for user visibility and future overrides
+		creds := Credentials{ClientID: BuiltinClientID, ClientSecret: BuiltinClientSecret}
+		saveJSON(credsPath, map[string]any{"installed": creds})
 	}
 
 	// 3. Last resort: Ask user for them interactively

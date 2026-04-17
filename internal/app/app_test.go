@@ -31,7 +31,11 @@ func TestResolveTimeArgDays(t *testing.T) {
 }
 
 func TestMergeMeta(t *testing.T) {
-	raw, err := mergeMeta(`{"cmd":"opencli sync"}`, "command", true, 7)
+	raw, err := mergeMeta(`{"cmd":"opencli sync"}`, metaUpdates{
+		kind:      "command",
+		parentSet: true,
+		parent:    7,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
