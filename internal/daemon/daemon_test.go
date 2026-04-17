@@ -34,7 +34,7 @@ func TestDaemonClient(t *testing.T) {
 
 	go func() {
 		// Just serve this one listener
-		d.serveListener(l)
+		d.serveListener(context.Background(), l)
 	}()
 
 	// Wait a bit
