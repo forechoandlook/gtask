@@ -69,14 +69,15 @@ curl -fsSL https://raw.githubusercontent.com/forechoandlook/gtask/main/uninstall
   ```
 - **查看详情**:
   ```bash
-  gtask show <id>
+  # 支持查看多个任务，可选 --csv 格式
+  gtask show <id1> [id2...] [--csv]
   ```
 - **更新任务**:
   ```bash
-  # 更新标题并标记完成
-  gtask update 1 --title "新标题" --completed true
-  # 追加备注 (不覆盖旧备注)
-  gtask update 1 --note "这是追加的第二条备注"
+  # 支持批量更新 (ID 以逗号分隔或空格分隔)
+  gtask update 1,2,3 --completed true
+  # 追加备注
+  gtask update 1 --note "这是追加的备注"
   # 清除截止时间
   gtask update 1 --target null
   ```
@@ -85,22 +86,23 @@ curl -fsSL https://raw.githubusercontent.com/forechoandlook/gtask/main/uninstall
   gtask delete <id>
   ```
 
-### 2. 列表与筛选
+### 2. 列表与筛选 (CSV 格式)
 
-- **列出所有待办**:
+为了方便 AI 审阅和程序化处理，列表输出统一采用 CSV 格式：
+`id,title,priority,target_time,kind,src,parent,audit,note`
+
+- **列出待办任务**:
   ```bash
-  gtask list
+  gtask todo
   ```
-- **包含已完成任务**:
+- **查看历史已完成**:
   ```bash
-  gtask list --all
+  gtask done
   ```
 - **高级筛选 (filter)**:
   ```bash
-  # 按来源和类型筛选
+  # 筛选结果同样以 CSV 格式输出
   gtask filter --source "idea" --kind "feature"
-  # 关键词搜索 (标题、元数据、备注)
-  gtask filter --query "搜索词"
   # 按优先级范围筛选
   gtask filter --priority-min 1 --priority-max 5
   ```

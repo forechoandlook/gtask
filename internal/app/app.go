@@ -88,30 +88,33 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 
 	var svc service.Service = localSvc
-	rpcSvc, err := daemon.NewRPCClient("tcp", net.JoinHostPort(host, port))
-	if err == nil {
+	rpcSvc, rpcErr := daemon.NewRPCClient("tcp", net.JoinHostPort(host, port))
+	if rpcErr == nil {
 		svc = rpcSvc
 	}
 
+	var cmdErr error
 	switch args[0] {
 	case "add":
-		return runAdd(ctx, svc, stdout, args[1:], jsonMode)
-	case "list":
-		return runList(ctx, svc, stdout, args[1:], jsonMode)
+		cmdErr = runAdd(ctx, svc, stdout, args[1:], jsonMode)
+	case "todo", "list":
+		cmdErr = runTodo(ctx, svc, stdout, args[1:], jsonMode)
+	case "done":
+		cmdErr = runDone(ctx, svc, stdout, args[1:], jsonMode)
 	case "filter":
-		return runFilter(ctx, svc, stdout, args[1:], jsonMode)
+		cmdErr = runFilter(ctx, svc, stdout, args[1:], jsonMode)
 	case "show":
-		return runShow(ctx, svc, stdout, args[1:], jsonMode)
+		cmdErr = runShow(ctx, svc, stdout, args[1:], jsonMode)
 	case "update":
-		return runUpdate(ctx, svc, stdout, args[1:], jsonMode)
+		cmdErr = runUpdate(ctx, svc, stdout, args[1:], jsonMode)
 	case "delete":
-		return runDelete(ctx, svc, stdout, args[1:], jsonMode)
+		cmdErr = runDelete(ctx, svc, stdout, args[1:], jsonMode)
 	case "upgrade":
-		return runSelfUpgrade(ctx, stdout)
+		cmdErr = runSelfUpgrade(ctx, stdout)
 	case "sync":
-		msg, err := svc.Sync(ctx)
-		if err != nil {
-			return err
+		msg, syncErr := svc.Sync(ctx)
+		if syncErr != nil {
+			return syncErr
 		}
 		if jsonMode {
 			json.NewEncoder(stdout).Encode(map[string]string{"message": msg})
@@ -125,6 +128,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+	if cmdErr != nil {
+		if cmdErr == flag.ErrHelp {
+			return nil
+		}
+		return cmdErr
+	}
+	return nil
 }
 
 func runAdd(ctx context.Context, svc service.Service, stdout io.Writer, args []string, jsonMode bool) error {
@@ -198,23 +208,109 @@ func runAdd(ctx context.Context, svc service.Service, stdout io.Writer, args []s
 	return nil
 }
 
-func runList(ctx context.Context, svc service.Service, stdout io.Writer, args []string, jsonMode bool) error {
-	fs := newFlagSet("list")
-	all := fs.Bool("all", false, "include completed tasks")
+func runTodo(ctx context.Context, svc service.Service, stdout io.Writer, args []string, jsonMode bool) error {
+	fs := newFlagSet("todo")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	tasks, err := svc.ListTasks(ctx, *all)
+	tasks, err := svc.ListTasks(ctx, false)
 	if err != nil {
 		return err
 	}
 	if jsonMode {
 		return json.NewEncoder(stdout).Encode(tasks)
 	}
-	for _, task := range tasks {
-		fmt.Fprintln(stdout, formatTaskLine(task))
-	}
+
+	printTasks(stdout, tasks, "")
 	return nil
+}
+
+func runDone(ctx context.Context, svc service.Service, stdout io.Writer, args []string, jsonMode bool) error {
+	fs := newFlagSet("done")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	completed := true
+	tasks, err := svc.ListTasksFiltered(ctx, store.ListFilter{Completed: &completed})
+	if err != nil {
+		return err
+	}
+	if jsonMode {
+		return json.NewEncoder(stdout).Encode(tasks)
+	}
+
+	printTasks(stdout, tasks, "")
+	return nil
+}
+
+func printTasks(w io.Writer, tasks []model.Task, label string) {
+	if len(tasks) > 0 {
+		fmt.Fprintln(w, "id,title,priority,target_time,kind,src,parent,audit,note")
+	}
+	for _, t := range tasks {
+		meta := summarizeMeta(t.MetaJSON)
+		nc := countNotes(t.NotesJSON)
+		
+		priorityStr := fmt.Sprintf("p%d", t.Priority)
+		
+		targetStr := "-"
+		if t.TargetAt != nil {
+			targetStr = t.TargetAt.Local().Format("2006-01-02 15:04")
+		}
+		
+		kind := meta.Kind
+		if kind == "" {
+			kind = "-"
+		}
+
+		source := t.Source
+		if source == "" {
+			source = "-"
+		}
+
+		parentStr := "-"
+		if meta.ParentID != nil {
+			parentStr = fmt.Sprintf("%d", *meta.ParentID)
+		}
+		
+		auditStr := "-"
+		var missing []string
+		if t.Source == "" { missing = append(missing, "S") }
+		if meta.Kind == "" { missing = append(missing, "K") }
+		if nc == 0 { missing = append(missing, "N") }
+		if len(missing) > 0 && !t.Completed {
+			auditStr = "MISSING_" + strings.Join(missing, "")
+		}
+
+		noteStr := "-"
+		if nc > 0 {
+			noteStr = getLatestNote(t.NotesJSON)
+		}
+
+		// CSV Line: id,title,priority,target_time,kind,src,parent,audit,note
+		fmt.Fprintf(w, "%d,%q,%s,%s,%s,%s,%s,%s,%q\n",
+			t.ID, t.Title, priorityStr, targetStr, kind, source, parentStr, auditStr, noteStr)
+	}
+}
+
+func getLatestNote(raw string) string {
+	var notes []model.Note
+	if err := json.Unmarshal([]byte(raw), &notes); err != nil {
+		return ""
+	}
+	if len(notes) == 0 {
+		return ""
+	}
+	// Assuming notes are appended to the end
+	return notes[len(notes)-1].Text
+}
+
+func truncate(s string, n int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) > n {
+		return s[:n-3] + "..."
+	}
+	return s
 }
 
 func runFilter(ctx context.Context, svc service.Service, stdout io.Writer, args []string, jsonMode bool) error {
@@ -268,14 +364,27 @@ func runFilter(ctx context.Context, svc service.Service, stdout io.Writer, args 
 	if jsonMode {
 		return json.NewEncoder(stdout).Encode(filtered)
 	}
-	for _, task := range filtered {
-		fmt.Fprintln(stdout, formatTaskLine(task))
+
+	var pending, completedItems []model.Task
+	for _, t := range filtered {
+		if t.Completed {
+			completedItems = append(completedItems, t)
+		} else {
+			pending = append(pending, t)
+		}
+	}
+
+	printTasks(stdout, pending, "Pending Tasks")
+	if len(completedItems) > 0 {
+		fmt.Fprintln(stdout, "\n--- Completed ---")
+		printTasks(stdout, completedItems, "Completed Tasks")
 	}
 	return nil
 }
 
 func formatTaskLine(t model.Task) string {
 	meta := summarizeMeta(t.MetaJSON)
+	nc := countNotes(t.NotesJSON)
 	
 	statusIcon := "[ ]"
 	if t.Completed {
@@ -285,9 +394,44 @@ func formatTaskLine(t model.Task) string {
 	// ID [ ] Title
 	line := fmt.Sprintf("%-3d %s %s", t.ID, statusIcon, t.Title)
 
+	// Indicators
+	var indicators []string
+	if meta.ParentID != nil {
+		indicators = append(indicators, fmt.Sprintf("↑%d", *meta.ParentID))
+	}
+	if t.TargetAt != nil && !t.Completed && t.TargetAt.Before(time.Now()) {
+		indicators = append(indicators, "⚠ OVERDUE")
+	}
+	
+	// Missing fields check
+	var missing []string
+	if t.Source == "" {
+		missing = append(missing, "src")
+	}
+	if meta.Kind == "" {
+		missing = append(missing, "kind")
+	}
+	if nc == 0 {
+		missing = append(missing, "note")
+	}
+	if len(missing) > 0 && !t.Completed {
+		indicators = append(indicators, fmt.Sprintf("!miss(%s)", strings.Join(missing, ",")))
+	}
+
+	// Task size check (arbitrary: title > 80 or notes > 3)
+	if len(t.Title) > 80 || nc > 3 {
+		indicators = append(indicators, "LARGE")
+	}
+
+	if len(indicators) > 0 {
+		line += " | " + strings.Join(indicators, " ")
+	}
+
 	// Minimal Tags: p0 source kind
 	var tags []string
-	tags = append(tags, fmt.Sprintf("p%d", t.Priority))
+	if t.Priority != 0 {
+		tags = append(tags, fmt.Sprintf("p%d", t.Priority))
+	}
 	if t.Source != "" {
 		tags = append(tags, t.Source)
 	}
@@ -295,7 +439,7 @@ func formatTaskLine(t model.Task) string {
 		tags = append(tags, meta.Kind)
 	}
 	if len(tags) > 0 {
-		line += " " + strings.Join(tags, " ")
+		line += " #" + strings.Join(tags, " #")
 	}
 
 	// Minimal Time: 2h ago / in 3d / no time
@@ -305,8 +449,6 @@ func formatTaskLine(t model.Task) string {
 			rel = "in " + strings.TrimSuffix(rel, " from now")
 		}
 		line += " " + rel
-	} else {
-		line += " no time"
 	}
 
 	// Simple indicators
@@ -320,54 +462,93 @@ func formatTaskLine(t model.Task) string {
 	return line
 }
 
+func countNotes(raw string) int {
+	if strings.TrimSpace(raw) == "" || raw == "[]" || raw == "null" {
+		return 0
+	}
+	var notes []any
+	if err := json.Unmarshal([]byte(raw), &notes); err != nil {
+		return 0
+	}
+	return len(notes)
+}
+
 func runShow(ctx context.Context, svc service.Service, stdout io.Writer, args []string, jsonMode bool) error {
 	fs := newFlagSet("show")
+	csvMode := fs.Bool("csv", false, "output in csv format")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: gtask show <id>")
+	if fs.NArg() == 0 {
+		return fmt.Errorf("usage: gtask show <id1> [id2...]")
 	}
-	id, err := strconv.ParseInt(fs.Arg(0), 10, 64)
-	if err != nil {
-		return fmt.Errorf("parse id: %w", err)
+
+	var tasks []model.Task
+	for _, arg := range fs.Args() {
+		id, err := strconv.ParseInt(arg, 10, 64)
+		if err != nil {
+			return fmt.Errorf("parse id %q: %w", arg, err)
+		}
+		task, err := svc.GetTask(ctx, id)
+		if err != nil {
+			return err
+		}
+		tasks = append(tasks, task)
 	}
-	task, err := svc.GetTask(ctx, id)
-	if err != nil {
-		return err
-	}
+
 	if jsonMode {
-		return json.NewEncoder(stdout).Encode(task)
+		if len(tasks) == 1 {
+			return json.NewEncoder(stdout).Encode(tasks[0])
+		}
+		return json.NewEncoder(stdout).Encode(tasks)
 	}
-	metaSummary := summarizeMeta(task.MetaJSON)
-	fmt.Fprintf(stdout, "id: %d\n", task.ID)
-	fmt.Fprintf(stdout, "title: %s\n", task.Title)
-	fmt.Fprintf(stdout, "status: %s\n", status(task.Completed))
-	fmt.Fprintf(stdout, "priority: %d\n", task.Priority)
-	fmt.Fprintf(stdout, "source: %s\n", emptyDash(task.Source))
-	fmt.Fprintf(stdout, "kind: %s\n", emptyDash(metaSummary.Kind))
-	fmt.Fprintf(stdout, "parent_id: %s\n", formatParent(metaSummary.ParentID))
-	fmt.Fprintf(stdout, "start_at: %s\n", formatMaybe(task.StartAt))
-	fmt.Fprintf(stdout, "target_at: %s\n", formatMaybe(task.TargetAt))
-	fmt.Fprintf(stdout, "updated_at: %s\n", task.UpdatedAt.UTC().Format(time.RFC3339))
-	fmt.Fprintf(stdout, "google_task_list_id: %s\n", emptyDash(task.GoogleTaskListID))
-	fmt.Fprintf(stdout, "google_task_id: %s\n", emptyDash(task.GoogleTaskID))
-	fmt.Fprintf(stdout, "last_synced_at: %s\n", formatMaybe(task.LastSyncedAt))
-	fmt.Fprintln(stdout, "meta:")
-	fmt.Fprintln(stdout, indentJSON(task.MetaJSON))
-	fmt.Fprintln(stdout, "notes:")
-	fmt.Fprintln(stdout, indentJSON(task.NotesJSON))
+
+	if *csvMode {
+		fmt.Fprintln(stdout, "id,title,status,priority,source,kind,parent_id,target_at,updated_at")
+		for _, task := range tasks {
+			metaSummary := summarizeMeta(task.MetaJSON)
+			fmt.Fprintf(stdout, "%d,%q,%s,%d,%q,%q,%s,%s,%s\n",
+				task.ID,
+				task.Title,
+				status(task.Completed),
+				task.Priority,
+				task.Source,
+				metaSummary.Kind,
+				formatParent(metaSummary.ParentID),
+				formatMaybe(task.TargetAt),
+				task.UpdatedAt.UTC().Format(time.RFC3339),
+			)
+		}
+		return nil
+	}
+
+	for i, task := range tasks {
+		if i > 0 {
+			fmt.Fprintln(stdout, "---")
+		}
+		metaSummary := summarizeMeta(task.MetaJSON)
+		fmt.Fprintf(stdout, "id: %d\n", task.ID)
+		fmt.Fprintf(stdout, "title: %s\n", task.Title)
+		fmt.Fprintf(stdout, "status: %s\n", status(task.Completed))
+		fmt.Fprintf(stdout, "priority: %d\n", task.Priority)
+		fmt.Fprintf(stdout, "source: %s\n", emptyDash(task.Source))
+		fmt.Fprintf(stdout, "kind: %s\n", emptyDash(metaSummary.Kind))
+		fmt.Fprintf(stdout, "parent_id: %s\n", formatParent(metaSummary.ParentID))
+		fmt.Fprintf(stdout, "start_at: %s\n", formatMaybe(task.StartAt))
+		fmt.Fprintf(stdout, "target_at: %s\n", formatMaybe(task.TargetAt))
+		fmt.Fprintf(stdout, "updated_at: %s\n", task.UpdatedAt.UTC().Format(time.RFC3339))
+		fmt.Fprintf(stdout, "google_task_list_id: %s\n", emptyDash(task.GoogleTaskListID))
+		fmt.Fprintf(stdout, "google_task_id: %s\n", emptyDash(task.GoogleTaskID))
+		fmt.Fprintf(stdout, "last_synced_at: %s\n", formatMaybe(task.LastSyncedAt))
+		fmt.Fprintln(stdout, "meta:")
+		fmt.Fprintln(stdout, indentJSON(task.MetaJSON))
+		fmt.Fprintln(stdout, "notes:")
+		fmt.Fprintln(stdout, indentJSON(task.NotesJSON))
+	}
 	return nil
 }
 
 func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args []string, jsonMode bool) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: gtask update <id> [flags]")
-	}
-	id, err := strconv.ParseInt(args[0], 10, 64)
-	if err != nil {
-		return fmt.Errorf("parse id: %w", err)
-	}
 	fs := newFlagSet("update")
 	title := fs.String("title", "", "new title")
 	priority := fs.Int("priority", 0, "new priority")
@@ -384,85 +565,117 @@ func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args 
 	monitorCmd := fs.String("monitor-cmd", "", "command to run periodically")
 	monitorInterval := fs.String("monitor-interval", "", "how often to run monitor command")
 	recurrence := fs.String("recurrence", "", "recurrence interval")
-	if err := fs.Parse(args[1:]); err != nil {
+
+	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	var in store.UpdateInput
-	in.ID = id
-	if fs.Lookup("title").Value.String() != "" {
-		in.Title = title
+
+	idArgs := fs.Args()
+	if len(idArgs) == 0 {
+		return fmt.Errorf("usage: gtask update <id1,id2,...> [flags] or gtask update [flags] <id1> <id2>")
 	}
-	if changedIntFlag(args, "priority") {
-		in.Priority = priority
-	}
-	if fs.Lookup("source").Value.String() != "" {
-		in.Source = source
-	}
-	if hasFlag(args, "start") {
-		v := parseNullableFlag(*startAt)
-		in.StartAt = &v
-	}
-	if hasFlag(args, "start-days") {
-		v := futureDays(*startDays)
-		in.StartAt = &v
-	}
-	if hasFlag(args, "target") {
-		v := parseNullableFlag(*targetAt)
-		in.TargetAt = &v
-	}
-	if hasFlag(args, "days") {
-		v := futureDays(*days)
-		in.TargetAt = &v
-	}
-	if strings.TrimSpace(*meta) != "" || hasFlag(args, "kind") || hasFlag(args, "parent") ||
-		hasFlag(args, "monitor-cmd") || hasFlag(args, "monitor-interval") || hasFlag(args, "recurrence") {
-		baseMeta := "{}"
-		current, err := svc.GetTask(ctx, id)
-		if err != nil {
-			return err
+
+	var ids []int64
+	for _, idArg := range idArgs {
+		parts := strings.Split(idArg, ",")
+		for _, p := range parts {
+			if p == "" {
+				continue
+			}
+			id, err := strconv.ParseInt(p, 10, 64)
+			if err != nil {
+				return fmt.Errorf("parse id %q: %w", p, err)
+			}
+			ids = append(ids, id)
 		}
-		baseMeta = current.MetaJSON
+	}
+
+	var updatedTasks []model.Task
+	for _, id := range ids {
+		var in store.UpdateInput
+		in.ID = id
+		if hasFlag(args, "title") {
+			in.Title = title
+		}
+		if hasFlag(args, "priority") {
+			in.Priority = priority
+		}
+		if hasFlag(args, "source") {
+			in.Source = source
+		}
+		if hasFlag(args, "start") {
+			v := parseNullableFlag(*startAt)
+			in.StartAt = &v
+		}
+		if hasFlag(args, "start-days") {
+			v := futureDays(*startDays)
+			in.StartAt = &v
+		}
+		if hasFlag(args, "target") {
+			v := parseNullableFlag(*targetAt)
+			in.TargetAt = &v
+		}
+		if hasFlag(args, "days") {
+			v := futureDays(*days)
+			in.TargetAt = &v
+		}
+		if strings.TrimSpace(*meta) != "" || hasFlag(args, "kind") || hasFlag(args, "parent") ||
+			hasFlag(args, "monitor-cmd") || hasFlag(args, "monitor-interval") || hasFlag(args, "recurrence") {
+			baseMeta := "{}"
+			current, err := svc.GetTask(ctx, id)
+			if err != nil {
+				return err
+			}
+			baseMeta = current.MetaJSON
+			if strings.TrimSpace(*meta) != "" {
+				baseMeta = *meta
+			}
+			parentSet, parentValue, err := parseParentUpdateArg(*parent, hasFlag(args, "parent"))
+			if err != nil {
+				return err
+			}
+			metaJSON, err := mergeMeta(baseMeta, metaUpdates{
+				kind:            strings.TrimSpace(*kind),
+				parentSet:       parentSet,
+				parent:          parentValue,
+				monitorCmd:      *monitorCmd,
+				monitorInterval: *monitorInterval,
+				recurrence:      *recurrence,
+			})
+			if err != nil {
+				return err
+			}
+			in.MetaJSON = &metaJSON
+		}
 		if strings.TrimSpace(*meta) != "" {
-			baseMeta = *meta
+			if !json.Valid([]byte(*meta)) {
+				return fmt.Errorf("meta must be valid json")
+			}
 		}
-		parentSet, parentValue, err := parseParentUpdateArg(*parent, hasFlag(args, "parent"))
+		if strings.TrimSpace(*completed) != "" {
+			v, err := strconv.ParseBool(*completed)
+			if err != nil {
+				return fmt.Errorf("parse completed: %w", err)
+			}
+			in.Completed = &v
+		}
+		in.AppendNote = *note
+		task, err := svc.UpdateTask(ctx, in)
 		if err != nil {
 			return err
 		}
-		metaJSON, err := mergeMeta(baseMeta, metaUpdates{
-			kind:            strings.TrimSpace(*kind),
-			parentSet:       parentSet,
-			parent:          parentValue,
-			monitorCmd:      *monitorCmd,
-			monitorInterval: *monitorInterval,
-			recurrence:      *recurrence,
-		})
-		if err != nil {
-			return err
-		}
-		in.MetaJSON = &metaJSON
+		updatedTasks = append(updatedTasks, task)
 	}
-	if strings.TrimSpace(*meta) != "" {
-		if !json.Valid([]byte(*meta)) {
-			return fmt.Errorf("meta must be valid json")
-		}
-	}
-	if strings.TrimSpace(*completed) != "" {
-		v, err := strconv.ParseBool(*completed)
-		if err != nil {
-			return fmt.Errorf("parse completed: %w", err)
-		}
-		in.Completed = &v
-	}
-	in.AppendNote = *note
-	task, err := svc.UpdateTask(ctx, in)
-	if err != nil {
-		return err
-	}
+
 	if jsonMode {
-		return json.NewEncoder(stdout).Encode(task)
+		if len(updatedTasks) == 1 {
+			return json.NewEncoder(stdout).Encode(updatedTasks[0])
+		}
+		return json.NewEncoder(stdout).Encode(updatedTasks)
 	}
-	fmt.Fprintf(stdout, "updated task %d: %s\n", task.ID, task.Title)
+	for _, task := range updatedTasks {
+		fmt.Fprintf(stdout, "updated task %d: %s\n", task.ID, task.Title)
+	}
 	return nil
 }
 
@@ -499,10 +712,11 @@ Global Flags:
 
 Core Commands:
   add       Create a new task
-  list      List pending tasks (use --all to see completed)
+  todo      List pending tasks (CSV format)
+  done      List completed tasks (CSV format)
   filter    Search and filter tasks with advanced criteria
-  show      Show full details of a single task by ID
-  update    Modify a task by ID
+  show      Show full details of tasks by IDs
+  update    Modify tasks by IDs
   delete    Remove a task by ID
   sync      Synchronize local tasks with Google Tasks
   daemon    Start background RPC server for faster access and notifications
@@ -524,7 +738,10 @@ Command Details:
      --monitor-interval DUR How often to run monitor (default 10m, e.g. 1m, 1h)
      --recurrence DUR  Repeat task after completion (e.g. 24h, 1h)
 
-  update <id>
+  show <id1> [id2...]
+     --csv             Output in CSV format
+
+  update <id1,id2,...> or update [flags] <id1> <id2>
      --completed B     Mark as done (true) or todo (false)
      --note TEXT       Append a new note to the notes history
      --target null     Use 'null' to clear target/start time fields
@@ -741,19 +958,21 @@ func changedIntFlag(args []string, name string) bool {
 
 func newFlagSet(name string) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(os.Stderr)
 	fs.Usage = func() {
 		switch name {
 		case "add":
 			fmt.Fprintln(os.Stderr, "usage: gtask add [title] [note] [--title <title>] [--priority N] [--source X] [--kind K] [--parent ID] [--start TIME] [--start-days N] [--target TIME] [--days N] [--meta JSON] [--note TEXT] [--monitor-cmd STR] [--monitor-interval DUR] [--recurrence DUR]")
-		case "list":
-			fmt.Fprintln(os.Stderr, "usage: gtask list [--all]")
+		case "todo":
+			fmt.Fprintln(os.Stderr, "usage: gtask todo")
+		case "done":
+			fmt.Fprintln(os.Stderr, "usage: gtask done")
 		case "filter":
 			fmt.Fprintln(os.Stderr, "usage: gtask filter [--all] [--source X] [--kind K] [--parent ID] [--query TEXT] [--completed true|false] [--priority-min N] [--priority-max N]")
 		case "show":
-			fmt.Fprintln(os.Stderr, "usage: gtask show <id>")
+			fmt.Fprintln(os.Stderr, "usage: gtask show <id1> [id2...] [--csv]")
 		case "update":
-			fmt.Fprintln(os.Stderr, "usage: gtask update <id> [--title T] [--priority N] [--source X] [--kind K] [--parent ID|null] [--start TIME|null] [--start-days N] [--target TIME|null] [--days N] [--meta JSON] [--completed true|false] [--note TEXT] [--monitor-cmd STR] [--monitor-interval DUR] [--recurrence DUR]")
+			fmt.Fprintln(os.Stderr, "usage: gtask update <id1,id2,...> [flags] or gtask update [flags] <id1> <id2>")
 		case "delete":
 			fmt.Fprintln(os.Stderr, "usage: gtask delete <id>")
 		case "daemon":
@@ -763,6 +982,8 @@ func newFlagSet(name string) *flag.FlagSet {
 		default:
 			fmt.Fprintf(os.Stderr, "usage: gtask %s\n", name)
 		}
+		fmt.Fprintln(os.Stderr, "\nflags:")
+		fs.PrintDefaults()
 	}
 	return fs
 }
