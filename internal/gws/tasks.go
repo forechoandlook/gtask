@@ -13,11 +13,10 @@ import (
 	"google.golang.org/api/tasks/v1"
 )
 
-// Default credentials provided by the user. 
-// Split into parts to avoid GitHub's secret scanning push protection.
+// The following variables are set at build time using -ldflags in CI
 var (
-	BuiltinClientID     = "1080025173286" + "-j14vlg7ve9bsae5hsdorie7u0arfa7gr.apps.googleusercontent.com"
-	BuiltinClientSecret = "GOCSPX-4ZB" + "-CuGE6zctowpcsuuUNwCOda3Q"
+	BuiltinClientID     string
+	BuiltinClientSecret string
 )
 
 type Client struct {
@@ -45,7 +44,7 @@ func NewClient(ctx context.Context) (*Client, error) {
 	}
 
 	gtaskDir := filepath.Join(home, ".gtask")
-	credsPath := filepath.Join(gtaskDir, "credentials.json")
+	credsPath := filepath.Join(gtaskDir, "client_secret.json")
 	tokenPath := filepath.Join(gtaskDir, "token.json")
 
 	if err := os.MkdirAll(gtaskDir, 0755); err != nil {
@@ -54,11 +53,13 @@ func NewClient(ctx context.Context) (*Client, error) {
 
 	var oauthConfig *oauth2.Config
 
-	// 1. Try loading user-provided credentials from disk (highest priority)
-	if conf, err := loadConfig(credsPath); err == nil {
-		oauthConfig = conf
-	} else {
-		// 2. Use builtin credentials (default)
+	// 1. Try loading user-provided client_secret.json from disk (highest priority)
+	if data, err := os.ReadFile(credsPath); err == nil {
+		oauthConfig, _ = google.ConfigFromJSON(data, tasks.TasksScope)
+	}
+
+	// 2. If not found on disk, use builtin credentials injected during build
+	if oauthConfig == nil && BuiltinClientID != "" && BuiltinClientSecret != "" {
 		oauthConfig = &oauth2.Config{
 			ClientID:     BuiltinClientID,
 			ClientSecret: BuiltinClientSecret,
@@ -68,7 +69,35 @@ func NewClient(ctx context.Context) (*Client, error) {
 		}
 	}
 
-	// 3. Load or Ask for User Token
+	// 3. Last resort: Ask user for them interactively
+	if oauthConfig == nil {
+		fmt.Println("Google OAuth credentials not found.")
+		fmt.Println("Please provide your Google Client ID and Client Secret.")
+		fmt.Print("Client ID: ")
+		var cid string
+		fmt.Scan(&cid)
+		fmt.Print("Client Secret: ")
+		var sec string
+		fmt.Scan(&sec)
+
+		if cid == "" || sec == "" {
+			return nil, fmt.Errorf("client ID and Secret are required")
+		}
+
+		// Save them as a simple json for future runs
+		creds := Credentials{ClientID: cid, ClientSecret: sec}
+		saveJSON(credsPath, map[string]any{"installed": creds})
+		
+		oauthConfig = &oauth2.Config{
+			ClientID:     cid,
+			ClientSecret: sec,
+			Endpoint:     google.Endpoint,
+			Scopes:       []string{tasks.TasksScope},
+			RedirectURL:  "urn:ietf:wg:oauth:2.0:oob",
+		}
+	}
+
+	// Load or Ask for User Token
 	token, err := tokenFromFile(tokenPath)
 	if err != nil {
 		token, err = getTokenFromWeb(oauthConfig)
@@ -85,25 +114,6 @@ func NewClient(ctx context.Context) (*Client, error) {
 	}
 
 	return &Client{service: srv}, nil
-}
-
-func loadConfig(path string) (*oauth2.Config, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	var creds Credentials
-	if err := json.NewDecoder(f).Decode(&creds); err != nil {
-		return nil, err
-	}
-	return &oauth2.Config{
-		ClientID:     creds.ClientID,
-		ClientSecret: creds.ClientSecret,
-		Endpoint:     google.Endpoint,
-		Scopes:       []string{tasks.TasksScope},
-		RedirectURL:  "urn:ietf:wg:oauth:2.0:oob",
-	}, nil
 }
 
 func getTokenFromWeb(config *oauth2.Config) (*oauth2.Token, error) {
