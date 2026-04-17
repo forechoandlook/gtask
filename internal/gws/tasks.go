@@ -26,6 +26,12 @@ type RemoteTask struct {
 	ID string `json:"id"`
 }
 
+// Credentials represents the Google OAuth client info
+type Credentials struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+}
+
 func NewClient(ctx context.Context) (*Client, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -33,54 +39,51 @@ func NewClient(ctx context.Context) (*Client, error) {
 	}
 
 	gtaskDir := filepath.Join(home, ".gtask")
+	credsPath := filepath.Join(gtaskDir, "credentials.json")
 	tokenPath := filepath.Join(gtaskDir, "token.json")
-	
-	// Try loading client secret from gtask dir first, then fallback to gws dir
-	secretPaths := []string{
-		filepath.Join(gtaskDir, "client_secret.json"),
-		filepath.Join(home, ".config", "gws", "client_secret.json"),
+
+	// 1. Ensure gtask directory exists
+	if err := os.MkdirAll(gtaskDir, 0755); err != nil {
+		return nil, fmt.Errorf("create gtask dir: %w", err)
 	}
 
-	var secretData []byte
-	for _, p := range secretPaths {
-		data, err := os.ReadFile(p)
-		if err == nil {
-			secretData = data
-			break
+	// 2. Load or Ask for Client Credentials
+	config, err := loadConfig(credsPath)
+	if err != nil {
+		// If not found or invalid, ask interactively
+		fmt.Println("Google OAuth credentials not found.")
+		fmt.Println("Please provide your Google Client ID and Client Secret.")
+		fmt.Print("Client ID: ")
+		var cid string
+		fmt.Scan(&cid)
+		fmt.Print("Client Secret: ")
+		var sec string
+		fmt.Scan(&sec)
+
+		if cid == "" || sec == "" {
+			return nil, fmt.Errorf("client ID and Secret are required")
+		}
+
+		creds := Credentials{ClientID: cid, ClientSecret: sec}
+		saveJSON(credsPath, creds)
+
+		config = &oauth2.Config{
+			ClientID:     cid,
+			ClientSecret: sec,
+			Endpoint:     google.Endpoint,
+			Scopes:       []string{tasks.TasksScope},
+			RedirectURL:  "urn:ietf:wg:oauth:2.0:oob",
 		}
 	}
 
-	if len(secretData) == 0 {
-		return nil, fmt.Errorf("client_secret.json not found in ~/.gtask or ~/.config/gws/. Please place your Google OAuth credentials file there.")
-	}
-
-	config, err := google.ConfigFromJSON(secretData, tasks.TasksScope)
-	if err != nil {
-		return nil, fmt.Errorf("parse client secret: %w", err)
-	}
-	// Important for CLI: set RedirectURL to OOB if needed, 
-	// though google.ConfigFromJSON usually picks it up from the JSON if present.
-	if len(config.RedirectURIs) > 0 && config.RedirectURIs[0] == "urn:ietf:wg:oauth:2.0:oob" {
-		config.RedirectURL = "urn:ietf:wg:oauth:2.0:oob"
-	}
-
-	// 1. Try loading local gtask token
+	// 3. Load or Ask for User Token
 	token, err := tokenFromFile(tokenPath)
 	if err != nil {
-		// 2. Fallback: try migrating from gws if exists
-		gwsTokenPath := filepath.Join(home, ".config", "gws", "token_cache.json")
-		token, err = tryMigrateGwsToken(gwsTokenPath)
+		token, err = getTokenFromWeb(config)
 		if err != nil {
-			// 3. Last resort: Interactive Auth
-			token, err = getTokenFromWeb(config)
-			if err != nil {
-				return nil, err
-			}
-			saveToken(tokenPath, token)
-		} else {
-			// Save the migrated token to our own path
-			saveToken(tokenPath, token)
+			return nil, err
 		}
+		saveJSON(tokenPath, token)
 	}
 
 	httpClient := config.Client(ctx, token)
@@ -92,12 +95,34 @@ func NewClient(ctx context.Context) (*Client, error) {
 	return &Client{service: srv}, nil
 }
 
+func loadConfig(path string) (*oauth2.Config, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var creds Credentials
+	if err := json.NewDecoder(f).Decode(&creds); err != nil {
+		return nil, err
+	}
+
+	return &oauth2.Config{
+		ClientID:     creds.ClientID,
+		ClientSecret: creds.ClientSecret,
+		Endpoint:     google.Endpoint,
+		Scopes:       []string{tasks.TasksScope},
+		RedirectURL:  "urn:ietf:wg:oauth:2.0:oob",
+	}, nil
+}
+
 func getTokenFromWeb(config *oauth2.Config) (*oauth2.Token, error) {
 	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
 	fmt.Printf("Go to the following link in your browser then type the "+
 		"authorization code: \n%v\n", authURL)
 
 	var authCode string
+	fmt.Print("Authorization Code: ")
 	if _, err := fmt.Scan(&authCode); err != nil {
 		return nil, fmt.Errorf("unable to read authorization code: %v", err)
 	}
@@ -120,33 +145,14 @@ func tokenFromFile(file string) (*oauth2.Token, error) {
 	return tok, err
 }
 
-func saveToken(path string, token *oauth2.Token) {
-	fmt.Printf("Saving credential file to: %s\n", path)
+func saveJSON(path string, v any) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
+		fmt.Printf("Warning: failed to save %s: %v\n", path, err)
 		return
 	}
 	defer f.Close()
-	json.NewEncoder(f).Encode(token)
-}
-
-func tryMigrateGwsToken(path string) (*oauth2.Token, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var token oauth2.Token
-	if err := json.Unmarshal(data, &token); err == nil {
-		return &token, nil
-	}
-	// Try map fallback
-	var tokenMap map[string]*oauth2.Token
-	if err := json.Unmarshal(data, &tokenMap); err == nil {
-		for _, v := range tokenMap {
-			return v, nil
-		}
-	}
-	return nil, fmt.Errorf("could not parse gws token")
+	json.NewEncoder(f).Encode(v)
 }
 
 func (c *Client) ListTaskLists(ctx context.Context) ([]TaskList, error) {
