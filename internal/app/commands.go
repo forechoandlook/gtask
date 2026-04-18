@@ -30,20 +30,24 @@ func runAdd(ctx context.Context, svc service.Service, stdout io.Writer, args []s
 	monitorInterval := fs.String("monitor-interval", "10m", "how often to run monitor")
 	recurrence := fs.String("recurrence", "", "recurrence interval")
 
-	if err := fs.Parse(args); err != nil {
+	// Extract up to 2 leading positionals (title, note) before flags.
+	var positionals []string
+	flagArgs := args
+	for len(flagArgs) > 0 && !strings.HasPrefix(flagArgs[0], "-") && len(positionals) < 2 {
+		positionals = append(positionals, flagArgs[0])
+		flagArgs = flagArgs[1:]
+	}
+	if err := fs.Parse(flagArgs); err != nil {
 		return err
 	}
-
-	arg0 := fs.Arg(0)
-	arg1 := fs.Arg(1)
 
 	finalTitle := *title
 	finalNote := *note
 
-	if finalTitle == "" && arg0 != "" {
-		finalTitle = arg0
-		if !strings.HasPrefix(arg1, "-") {
-			finalNote = arg1
+	if finalTitle == "" && len(positionals) > 0 {
+		finalTitle = positionals[0]
+		if len(positionals) > 1 {
+			finalNote = positionals[1]
 		}
 	}
 
