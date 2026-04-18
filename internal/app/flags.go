@@ -78,21 +78,24 @@ func hasFlag(args []string, name string) bool {
 
 func extractPositionalArgs(args []string) []string {
 	var out []string
-	skip := false
 	for _, arg := range args {
-		if skip {
-			skip = false
-			continue
+		if isIDArg(arg) {
+			out = append(out, arg)
 		}
-		if strings.HasPrefix(arg, "--") {
-			if !strings.Contains(arg, "=") {
-				skip = true
-			}
-			continue
-		}
-		out = append(out, arg)
 	}
 	return out
+}
+
+func isIDArg(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c != ',' && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func parseIDs(args []string) ([]int64, error) {

@@ -79,6 +79,7 @@ func TestExtractPositionalArgs(t *testing.T) {
 		{[]string{"--note", "foo", "1", "2"}, []string{"1", "2"}},
 		{[]string{"1", "--note", "foo", "2", "--target", "2026-04-20"}, []string{"1", "2"}},
 		{[]string{"1", "--note=foo", "2"}, []string{"1", "2"}},
+		{[]string{"--csv", "4", "26"}, []string{"4", "26"}},
 		{[]string{"--note", "foo"}, nil},
 		{[]string{}, nil},
 	}
