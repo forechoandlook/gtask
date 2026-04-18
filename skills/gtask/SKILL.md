@@ -2,9 +2,9 @@
 name: gtask
 description: "本地 + Google Tasks 任务管理。仅在用户要读/改真实待办时使用；不要把它当成 agent 自己的临时计划板。"
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
   authors: ["zwy"]
-  updated: "2026-04-17"
+  updated: "2026-04-18"
 ---
 ## 作用边界
 在这些场景优先使用 `gtask`:
@@ -31,7 +31,7 @@ gtask todo
 ```bash
 gtask todo
 gtask done
-gtask show [--csv] <id1> [id2...]
+gtask show <id1> [id2,...] [--csv]
 gtask filter --priority-min 0 --priority-max 3
 ```
 执行原则：
@@ -64,12 +64,12 @@ gtask add "今晚切片" --kind feature --parent <id>
 ### 3. 修正任务
 常用命令：
 ```bash
-gtask show [--csv] <id1> [id2...]
-gtask update [flags] <id1> [id2...]
+gtask show <id1> [id2,...] [--csv]
+gtask update <id1> [id2,...] [flags]
 ```
 修正时优先做这些事情：
 - 给缺失的 `source/kind` 补齐
-- 支持批量更新：如果多个任务属于同一类，使用 `gtask update --kind xxx id1,id2`
+- 支持批量更新：如果多个任务属于同一类，使用 `gtask update id1,id2 --kind xxx`
 - 给重复任务建立父子关系，或降级其中一个为总任务
 - 把已过期但仍是 `todo` 的 `target_at` 重排
 - 给范围过大的任务追加 note，收窄成可执行切片
@@ -110,10 +110,11 @@ gtask todo
 gtask done
 gtask filter --source "idea1" --kind "feature"
 gtask show 1 2 3
+gtask show 1 2 3 --csv
 gtask add "标题" "第一条备注"
-gtask update --note "追加说明" 1,2
-gtask update --completed true 1
-gtask delete <id1> [id2...]
+gtask update 1,2 --note "追加说明"
+gtask update 1 --completed true
+gtask delete 1 2
 gtask sync
 ```
 ## 时间格式
