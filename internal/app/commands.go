@@ -184,12 +184,11 @@ func runShow(ctx context.Context, svc service.Service, stdout io.Writer, args []
 	if err := fs.Parse(rest); err != nil {
 		return err
 	}
-	idArgs := append(leading, fs.Args()...)
-	if len(idArgs) == 0 {
-		return fmt.Errorf("usage: gtask show [--csv] <id1> [id2...]")
+	if len(leading) == 0 {
+		return fmt.Errorf("usage: gtask show <id1> [id2,...] [--csv]")
 	}
 
-	ids, err := parseIDs(idArgs)
+	ids, err := parseIDs(leading)
 	if err != nil {
 		return err
 	}
@@ -263,12 +262,12 @@ func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args 
 	if err := fs.Parse(rest); err != nil {
 		return err
 	}
-	ids, err := parseIDs(append(leading, fs.Args()...))
+	ids, err := parseIDs(leading)
 	if err != nil {
 		return err
 	}
 	if len(ids) == 0 {
-		return fmt.Errorf("usage: gtask update [flags] <id1> [id2...]")
+		return fmt.Errorf("usage: gtask update <id1> [id2,...] [flags]")
 	}
 
 	var updatedTasks []model.Task
@@ -366,12 +365,12 @@ func runDelete(ctx context.Context, svc service.Service, stdout io.Writer, args 
 	if err := fs.Parse(rest); err != nil {
 		return err
 	}
-	ids, err := parseIDs(append(leading, fs.Args()...))
+	ids, err := parseIDs(leading)
 	if err != nil {
 		return err
 	}
 	if len(ids) == 0 {
-		return fmt.Errorf("usage: gtask delete <id1> [id2...]")
+		return fmt.Errorf("usage: gtask delete <id1> [id2,...]")
 	}
 
 	var deletedIDs []int64

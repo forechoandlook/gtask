@@ -120,11 +120,11 @@ func newFlagSet(name string) *flag.FlagSet {
 		case "filter":
 			fmt.Fprintln(os.Stderr, "usage: gtask filter [--all] [--source X] [--kind K] [--parent ID] [--query TEXT] [--completed true|false] [--priority-min N] [--priority-max N]")
 		case "show":
-			fmt.Fprintln(os.Stderr, "usage: gtask show [--csv] <id1> [id2...]")
+			fmt.Fprintln(os.Stderr, "usage: gtask show <id1> [id2,...] [--csv]")
 		case "update":
-			fmt.Fprintln(os.Stderr, "usage: gtask update [flags] <id1> [id2...]")
+			fmt.Fprintln(os.Stderr, "usage: gtask update <id1> [id2,...] [flags]")
 		case "delete":
-			fmt.Fprintln(os.Stderr, "usage: gtask delete <id1> [id2...]")
+			fmt.Fprintln(os.Stderr, "usage: gtask delete <id1> [id2,...]")
 		case "daemon":
 			fmt.Fprintln(os.Stderr, "usage: gtask daemon [--host 127.0.0.1] [--port 8765]")
 		case "upgrade":

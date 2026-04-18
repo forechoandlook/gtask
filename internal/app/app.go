@@ -140,9 +140,9 @@ Core Commands:
   todo      List pending tasks (CSV format)
   done      List completed tasks (CSV format)
   filter    Search and filter tasks with advanced criteria
-  show      Show full details of tasks by IDs
-  update    Modify tasks by IDs
-  delete <id1> [id2...]  Remove tasks by IDs
+  show      Show full details of one or more tasks
+  update    Modify one or more tasks
+  delete    Remove one or more tasks
   sync      Synchronize local tasks with Google Tasks
   daemon    Start background RPC server for faster access and notifications
   upgrade   Upgrade gtask binary to the latest version
@@ -163,14 +163,19 @@ Command Details:
      --monitor-interval DUR How often to run monitor (default 10m, e.g. 1m, 1h)
      --recurrence DUR  Repeat task after completion (e.g. 24h, 1h)
 
-  show [--csv] <id1> [id2...]
-     --csv             Output in CSV format
+  show <id1> [id2,...] [--csv]
+     IDs must come before flags. Comma-separated or space-separated.
+     --csv             Output in CSV format (default: detailed view)
 
-  update [flags] <id1> [id2...]
+  update <id1> [id2,...] [flags]
+     IDs must come before flags. Comma-separated or space-separated.
      --completed B     Mark as done (true) or todo (false)
      --note TEXT       Append a new note to the notes history
      --target null     Use 'null' to clear target/start time fields
      --recurrence DUR  Update recurrence interval
+
+  delete <id1> [id2,...]
+     IDs must come before flags. Comma-separated or space-separated.
 
 Time Formats:
   RFC3339:         2026-04-15T23:00:00+08:00

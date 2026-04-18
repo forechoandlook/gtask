@@ -78,7 +78,7 @@ func TestSplitLeadingPositionals(t *testing.T) {
 		{[]string{"1", "2", "--note", "foo"}, []string{"1", "2"}, []string{"--note", "foo"}},
 		{[]string{"--note", "foo", "1", "2"}, nil, []string{"--note", "foo", "1", "2"}},
 		{[]string{"1", "--priority", "2"}, []string{"1"}, []string{"--priority", "2"}},
-		{[]string{"--csv", "4", "26"}, nil, []string{"--csv", "4", "26"}},
+		{[]string{"4", "26", "--csv"}, []string{"4", "26"}, []string{"--csv"}},
 		{[]string{"1", "2", "3"}, []string{"1", "2", "3"}, nil},
 		{[]string{}, nil, nil},
 	}
