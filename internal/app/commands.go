@@ -278,33 +278,33 @@ func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args 
 	for _, id := range ids {
 		var in store.UpdateInput
 		in.ID = id
-		if hasFlag(args, "title") {
+		if hasFlag(rest, "title") {
 			in.Title = title
 		}
-		if hasFlag(args, "priority") {
+		if hasFlag(rest, "priority") {
 			in.Priority = priority
 		}
-		if hasFlag(args, "source") {
+		if hasFlag(rest, "source") {
 			in.Source = source
 		}
-		if hasFlag(args, "start") {
+		if hasFlag(rest, "start") {
 			v := parseNullableFlag(*startAt)
 			in.StartAt = &v
 		}
-		if hasFlag(args, "start-days") {
+		if hasFlag(rest, "start-days") {
 			v := futureDays(*startDays)
 			in.StartAt = &v
 		}
-		if hasFlag(args, "target") {
+		if hasFlag(rest, "target") {
 			v := parseNullableFlag(*targetAt)
 			in.TargetAt = &v
 		}
-		if hasFlag(args, "days") {
+		if hasFlag(rest, "days") {
 			v := futureDays(*days)
 			in.TargetAt = &v
 		}
-		if strings.TrimSpace(*meta) != "" || hasFlag(args, "kind") || hasFlag(args, "parent") ||
-			hasFlag(args, "monitor-cmd") || hasFlag(args, "monitor-interval") || hasFlag(args, "recurrence") {
+		if strings.TrimSpace(*meta) != "" || hasFlag(rest, "kind") || hasFlag(rest, "parent") ||
+			hasFlag(rest, "monitor-cmd") || hasFlag(rest, "monitor-interval") || hasFlag(rest, "recurrence") {
 			baseMeta := "{}"
 			current, err := svc.GetTask(ctx, id)
 			if err != nil {
@@ -314,7 +314,7 @@ func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args 
 			if strings.TrimSpace(*meta) != "" {
 				baseMeta = *meta
 			}
-			parentSet, parentValue, err := parseParentUpdateArg(*parent, hasFlag(args, "parent"))
+			parentSet, parentValue, err := parseParentUpdateArg(*parent, hasFlag(rest, "parent"))
 			if err != nil {
 				return err
 			}
