@@ -21,6 +21,8 @@ type ListFilter struct {
 	IncludeCompleted bool
 	Completed        *bool
 	Source           string
+	Kind             string
+	ParentID         *int64
 	Query            string
 	PriorityMin      *int
 	PriorityMax      *int
@@ -163,6 +165,18 @@ FROM tasks`
 	if strings.TrimSpace(filter.Source) != "" {
 		clauses = append(clauses, `source = ?`)
 		args = append(args, strings.TrimSpace(filter.Source))
+	}
+	if strings.TrimSpace(filter.Kind) != "" {
+		clauses = append(clauses, `json_extract(meta_json, '$.kind') = ?`)
+		args = append(args, strings.TrimSpace(filter.Kind))
+	}
+	if filter.ParentID != nil {
+		if *filter.ParentID == 0 {
+			clauses = append(clauses, `json_extract(meta_json, '$.parent_id') IS NULL`)
+		} else {
+			clauses = append(clauses, `json_extract(meta_json, '$.parent_id') = ?`)
+			args = append(args, *filter.ParentID)
+		}
 	}
 	if strings.TrimSpace(filter.Query) != "" {
 		clauses = append(clauses, `(title LIKE ? OR meta_json LIKE ? OR notes_json LIKE ?)`)

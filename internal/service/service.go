@@ -51,3 +51,10 @@ func (s *LocalService) DeleteTask(ctx context.Context, id int64) error {
 func (s *LocalService) Sync(ctx context.Context) (string, error) {
 	return syncer.New(s.Cfg, s.Store).Sync(ctx)
 }
+
+func New(cfg config.Config, st *store.Store) Service {
+	return &LocalService{
+		Store: st,
+		Cfg:   cfg,
+	}
+}

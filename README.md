@@ -69,21 +69,22 @@ curl -fsSL https://raw.githubusercontent.com/forechoandlook/gtask/main/uninstall
   ```
 - **查看详情**:
   ```bash
-  # 支持查看多个任务，可选 --csv 格式
-  gtask show <id1> [id2...] [--csv]
+  # 支持查看多个任务 (ID 以逗号或空格分隔)，可选 --csv 格式
+  gtask show [--csv] 1,2,3
   ```
 - **更新任务**:
   ```bash
   # 支持批量更新 (ID 以逗号分隔或空格分隔)
-  gtask update 1,2,3 --completed true
+  gtask update --completed true 1,2,3
   # 追加备注
-  gtask update 1 --note "这是追加的备注"
+  gtask update --note "这是追加的备注" 1
   # 清除截止时间
-  gtask update 1 --target null
+  gtask update --target null 1
   ```
 - **删除任务**:
   ```bash
-  gtask delete <id>
+  # 支持删除多个任务
+  gtask delete <id1> [id2...]
   ```
 
 ### 2. 列表与筛选 (CSV 格式)

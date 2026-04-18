@@ -27,11 +27,11 @@ gtask todo
 ## 默认工作流
 ### 1. 审阅任务
 适用于“审阅我所有 task”“给今晚优先级”“看看有哪些问题”这类请求。
-默认流程：
+常用命令：
 ```bash
 gtask todo
 gtask done
-gtask show <id1> [id2...] [--csv]
+gtask show [--csv] <id1> [id2...]
 gtask filter --priority-min 0 --priority-max 3
 ```
 执行原则：
@@ -64,12 +64,12 @@ gtask add "今晚切片" --kind feature --parent <id>
 ### 3. 修正任务
 常用命令：
 ```bash
-gtask show <id1> [id2...]
-gtask update <id1,id2,...> [--title T] [--priority N] [--source X] [--kind K] [--parent ID|null] [--target null] [--days N] [--note TEXT]
+gtask show [--csv] <id1> [id2...]
+gtask update [flags] <id1> [id2...]
 ```
 修正时优先做这些事情：
 - 给缺失的 `source/kind` 补齐
-- 支持批量更新：如果多个任务属于同一类，使用 `gtask update id1,id2 --kind xxx`
+- 支持批量更新：如果多个任务属于同一类，使用 `gtask update --kind xxx id1,id2`
 - 给重复任务建立父子关系，或降级其中一个为总任务
 - 把已过期但仍是 `todo` 的 `target_at` 重排
 - 给范围过大的任务追加 note，收窄成可执行切片
@@ -111,9 +111,9 @@ gtask done
 gtask filter --source "idea1" --kind "feature"
 gtask show 1 2 3
 gtask add "标题" "第一条备注"
-gtask update 1,2 --note "追加说明"
-gtask update 1 --completed true
-gtask delete <id>
+gtask update --note "追加说明" 1,2
+gtask update --completed true 1
+gtask delete <id1> [id2...]
 gtask sync
 ```
 ## 时间格式
