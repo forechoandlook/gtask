@@ -180,14 +180,16 @@ func runFilter(ctx context.Context, svc service.Service, stdout io.Writer, args 
 func runShow(ctx context.Context, svc service.Service, stdout io.Writer, args []string, jsonMode bool) error {
 	fs := newFlagSet("show")
 	csvMode := fs.Bool("csv", false, "output in csv format")
-	if err := fs.Parse(args); err != nil {
+	leading, rest := splitLeadingPositionals(args)
+	if err := fs.Parse(rest); err != nil {
 		return err
 	}
-	if fs.NArg() == 0 {
+	idArgs := append(leading, fs.Args()...)
+	if len(idArgs) == 0 {
 		return fmt.Errorf("usage: gtask show [--csv] <id1> [id2...]")
 	}
 
-	ids, err := parseIDs(extractPositionalArgs(args))
+	ids, err := parseIDs(idArgs)
 	if err != nil {
 		return err
 	}
@@ -257,11 +259,11 @@ func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args 
 	monitorInterval := fs.String("monitor-interval", "", "how often to run monitor command")
 	recurrence := fs.String("recurrence", "", "recurrence interval")
 
-	if err := fs.Parse(args); err != nil {
+	leading, rest := splitLeadingPositionals(args)
+	if err := fs.Parse(rest); err != nil {
 		return err
 	}
-
-	ids, err := parseIDs(extractPositionalArgs(args))
+	ids, err := parseIDs(append(leading, fs.Args()...))
 	if err != nil {
 		return err
 	}
@@ -360,11 +362,11 @@ func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args 
 
 func runDelete(ctx context.Context, svc service.Service, stdout io.Writer, args []string, jsonMode bool) error {
 	fs := newFlagSet("delete")
-	if err := fs.Parse(args); err != nil {
+	leading, rest := splitLeadingPositionals(args)
+	if err := fs.Parse(rest); err != nil {
 		return err
 	}
-
-	ids, err := parseIDs(extractPositionalArgs(args))
+	ids, err := parseIDs(append(leading, fs.Args()...))
 	if err != nil {
 		return err
 	}

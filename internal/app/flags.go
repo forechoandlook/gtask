@@ -76,26 +76,16 @@ func hasFlag(args []string, name string) bool {
 	return false
 }
 
-func extractPositionalArgs(args []string) []string {
-	var out []string
-	for _, arg := range args {
-		if isIDArg(arg) {
-			out = append(out, arg)
+// splitLeadingPositionals splits args into positional args that precede any flag
+// and the remaining args (flags + their values + trailing positionals).
+// This lets callers pass leading IDs before flags, e.g. "update 1 --note foo".
+func splitLeadingPositionals(args []string) (leading, rest []string) {
+	for i, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			return args[:i], args[i:]
 		}
 	}
-	return out
-}
-
-func isIDArg(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, c := range s {
-		if c != ',' && (c < '0' || c > '9') {
-			return false
-		}
-	}
-	return true
+	return args, nil
 }
 
 func parseIDs(args []string) ([]int64, error) {

@@ -69,30 +69,27 @@ func TestParseParentUpdateArg(t *testing.T) {
 	}
 }
 
-func TestExtractPositionalArgs(t *testing.T) {
+func TestSplitLeadingPositionals(t *testing.T) {
 	cases := []struct {
-		args []string
-		want []string
+		args    []string
+		leading []string
+		rest    []string
 	}{
-		{[]string{"1", "2", "3"}, []string{"1", "2", "3"}},
-		{[]string{"1", "2", "--note", "foo"}, []string{"1", "2"}},
-		{[]string{"--note", "foo", "1", "2"}, []string{"1", "2"}},
-		{[]string{"1", "--note", "foo", "2", "--target", "2026-04-20"}, []string{"1", "2"}},
-		{[]string{"1", "--note=foo", "2"}, []string{"1", "2"}},
-		{[]string{"--csv", "4", "26"}, []string{"4", "26"}},
-		{[]string{"--note", "foo"}, nil},
-		{[]string{}, nil},
+		{[]string{"1", "2", "--note", "foo"}, []string{"1", "2"}, []string{"--note", "foo"}},
+		{[]string{"--note", "foo", "1", "2"}, nil, []string{"--note", "foo", "1", "2"}},
+		{[]string{"1", "--priority", "2"}, []string{"1"}, []string{"--priority", "2"}},
+		{[]string{"--csv", "4", "26"}, nil, []string{"--csv", "4", "26"}},
+		{[]string{"1", "2", "3"}, []string{"1", "2", "3"}, nil},
+		{[]string{}, nil, nil},
 	}
 	for _, tc := range cases {
-		got := extractPositionalArgs(tc.args)
-		if len(got) != len(tc.want) {
-			t.Errorf("extractPositionalArgs(%v) = %v, want %v", tc.args, got, tc.want)
+		gotL, gotR := splitLeadingPositionals(tc.args)
+		if len(gotL) != len(tc.leading) {
+			t.Errorf("splitLeadingPositionals(%v) leading = %v, want %v", tc.args, gotL, tc.leading)
 			continue
 		}
-		for i := range got {
-			if got[i] != tc.want[i] {
-				t.Errorf("extractPositionalArgs(%v)[%d] = %q, want %q", tc.args, i, got[i], tc.want[i])
-			}
+		if len(gotR) != len(tc.rest) {
+			t.Errorf("splitLeadingPositionals(%v) rest = %v, want %v", tc.args, gotR, tc.rest)
 		}
 	}
 }
