@@ -61,11 +61,14 @@ func auditTask(t model.Task) string {
 	return "-"
 }
 
-func getLatestNote(raw string) string {
+func parseNotes(raw string) []model.Note {
 	var notes []model.Note
-	if err := json.Unmarshal([]byte(raw), &notes); err != nil {
-		return ""
-	}
+	_ = json.Unmarshal([]byte(raw), &notes)
+	return notes
+}
+
+func getLatestNote(raw string) string {
+	notes := parseNotes(raw)
 	if len(notes) == 0 {
 		return ""
 	}
@@ -76,11 +79,7 @@ func getLatestNote(raw string) string {
 }
 
 func countNotes(raw string) int {
-	var notes []any
-	if err := json.Unmarshal([]byte(raw), &notes); err != nil {
-		return 0
-	}
-	return len(notes)
+	return len(parseNotes(raw))
 }
 
 func status(v bool) string {
