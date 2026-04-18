@@ -80,6 +80,27 @@ func changedIntFlag(args []string, name string) bool {
 	return hasFlag(args, name)
 }
 
+// extractPositionalArgs extracts non-flag arguments from args, skipping flag names and their values.
+// This allows IDs to appear before or after flags, e.g. "gtask update 1 --note foo".
+func extractPositionalArgs(args []string) []string {
+	var out []string
+	skip := false
+	for _, arg := range args {
+		if skip {
+			skip = false
+			continue
+		}
+		if strings.HasPrefix(arg, "--") {
+			if !strings.Contains(arg, "=") {
+				skip = true
+			}
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
+}
+
 func parseIDs(args []string) ([]int64, error) {
 	var ids []int64
 	for _, arg := range args {

@@ -38,7 +38,7 @@ func formatTaskLine(t model.Task) string {
 		emptyDash(t.Source),
 		formatParent(meta.ParentID),
 		auditTask(t),
-		truncate(getLatestNote(t.NotesJSON), 50),
+		getLatestNote(t.NotesJSON),
 	)
 }
 
@@ -62,24 +62,17 @@ func auditTask(t model.Task) string {
 }
 
 func getLatestNote(raw string) string {
-	var notes []struct {
-		Text string `json:"text"`
-	}
+	var notes []model.Note
 	if err := json.Unmarshal([]byte(raw), &notes); err != nil {
 		return ""
 	}
 	if len(notes) == 0 {
 		return ""
 	}
-	return notes[len(notes)-1].Text
-}
-
-func truncate(s string, n int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
+	n := notes[len(notes)-1]
+	ts := n.At.Local().Format("2006-01-02 15:04")
+	text := strings.ReplaceAll(n.Text, "\n", " ")
+	return fmt.Sprintf("[%s] %s", ts, text)
 }
 
 func countNotes(raw string) int {

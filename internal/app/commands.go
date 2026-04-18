@@ -189,7 +189,7 @@ func runShow(ctx context.Context, svc service.Service, stdout io.Writer, args []
 		return fmt.Errorf("usage: gtask show [--csv] <id1> [id2...]")
 	}
 
-	ids, err := parseIDs(fs.Args())
+	ids, err := parseIDs(extractPositionalArgs(args))
 	if err != nil {
 		return err
 	}
@@ -263,7 +263,7 @@ func runUpdate(ctx context.Context, svc service.Service, stdout io.Writer, args 
 		return err
 	}
 
-	ids, err := parseIDs(fs.Args())
+	ids, err := parseIDs(extractPositionalArgs(args))
 	if err != nil {
 		return err
 	}
@@ -366,7 +366,7 @@ func runDelete(ctx context.Context, svc service.Service, stdout io.Writer, args 
 		return err
 	}
 
-	ids, err := parseIDs(fs.Args())
+	ids, err := parseIDs(extractPositionalArgs(args))
 	if err != nil {
 		return err
 	}

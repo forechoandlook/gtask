@@ -85,21 +85,22 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 
 	var cmdErr error
+	rest := args[1:]
 	switch cmd {
 	case "add":
-		cmdErr = runAdd(ctx, svc, stdout, args, jsonMode)
+		cmdErr = runAdd(ctx, svc, stdout, rest, jsonMode)
 	case "todo":
-		cmdErr = runTodo(ctx, svc, stdout, args, jsonMode)
+		cmdErr = runTodo(ctx, svc, stdout, rest, jsonMode)
 	case "done":
-		cmdErr = runDone(ctx, svc, stdout, args, jsonMode)
+		cmdErr = runDone(ctx, svc, stdout, rest, jsonMode)
 	case "filter":
-		cmdErr = runFilter(ctx, svc, stdout, args, jsonMode)
+		cmdErr = runFilter(ctx, svc, stdout, rest, jsonMode)
 	case "show":
-		cmdErr = runShow(ctx, svc, stdout, args, jsonMode)
+		cmdErr = runShow(ctx, svc, stdout, rest, jsonMode)
 	case "update":
-		cmdErr = runUpdate(ctx, svc, stdout, args, jsonMode)
+		cmdErr = runUpdate(ctx, svc, stdout, rest, jsonMode)
 	case "delete":
-		cmdErr = runDelete(ctx, svc, stdout, args, jsonMode)
+		cmdErr = runDelete(ctx, svc, stdout, rest, jsonMode)
 	case "sync":
 		msg, err := svc.Sync(ctx)
 		if err == nil {
