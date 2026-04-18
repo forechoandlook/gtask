@@ -100,7 +100,7 @@ func formatMaybe(v *time.Time) string {
 	if v == nil {
 		return "-"
 	}
-	return v.UTC().Format(time.RFC3339)
+	return v.Local().Format("2006-01-02 15:04")
 }
 
 func emptyDash(v string) string {

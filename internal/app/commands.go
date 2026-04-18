@@ -7,8 +7,6 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"time"
-
 	"github.com/forechoandlook/gtask/internal/model"
 	"github.com/forechoandlook/gtask/internal/service"
 	"github.com/forechoandlook/gtask/internal/store"
@@ -229,7 +227,7 @@ func runShow(ctx context.Context, svc service.Service, stdout io.Writer, args []
 		fmt.Fprintf(stdout, "parent_id: %s\n", formatParent(metaSummary.ParentID))
 		fmt.Fprintf(stdout, "start_at: %s\n", formatMaybe(task.StartAt))
 		fmt.Fprintf(stdout, "target_at: %s\n", formatMaybe(task.TargetAt))
-		fmt.Fprintf(stdout, "updated_at: %s\n", task.UpdatedAt.UTC().Format(time.RFC3339))
+		fmt.Fprintf(stdout, "updated_at: %s\n", task.UpdatedAt.Local().Format("2006-01-02 15:04"))
 		fmt.Fprintf(stdout, "google_task_list_id: %s\n", emptyDash(task.GoogleTaskListID))
 		fmt.Fprintf(stdout, "google_task_id: %s\n", emptyDash(task.GoogleTaskID))
 		fmt.Fprintf(stdout, "last_synced_at: %s\n", formatMaybe(task.LastSyncedAt))
